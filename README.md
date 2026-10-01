@@ -6,7 +6,7 @@
 > 제출일: **2026년 10월 2일 금요일**. 현재 버전: **v0.1 · 로컬 실행 MVP**.
 > 카드 제작은 실행 검증 완료. 외부 API와 실제 인스타그램 게시의 운영 검증은 연결 후 진행해야 합니다.
 
-저장소: https://github.com/reco5149-art/issue-news-money-studio (비공개)
+저장소: https://github.com/reco5149-art/issue-news-money-studio
 
 ![실제 제작 화면](DevelopDoc/assets/studio-preview.png)
 
@@ -38,7 +38,7 @@ PC 재부팅 후에는 `start.bat`을 다시 실행해야 합니다. 서버는 *
 4. `문안 편집`에서 제목을 바꾸고 저장합니다.
 5. `PNG + 캡션 다운로드`로 ZIP을 저장합니다.
 6. 보관함, 발행 일정, 연결 설정을 보여줍니다. 미연결 기능은 미연결 상태 그대로 설명합니다.
-7. [발표 자료](Presentation/index.html)를 열거나 http://127.0.0.1:8765/presentation 에 접속합니다.
+7. 발표자료와 발표 대본은 로컬 전용이며 공개 저장소에는 포함하지 않습니다.
 
 ## 기능과 현재 지원 범위
 
@@ -87,7 +87,7 @@ DevelopDoc/
   FINAL_CHECKLIST.md
   DEVELOPMENT_SCHEDULE.md
   TEST_REPORT.md
-Presentation/
+(로컬 전용 발표자료)/
   index.html
   SPEAKER_NOTES.md
 app/              # API, 이미지 렌더러, DB, 외부 서비스, 예약 작업
@@ -118,7 +118,7 @@ node --check static/app.js
 - [9/29~10/2 개발 일정](DevelopDoc/DEVELOPMENT_SCHEDULE.md)
 - [테스트 결과](DevelopDoc/TEST_REPORT.md)
 - [API 키 발급·연결 안내](DevelopDoc/API_SETUP.md)
-- [발표 자료](Presentation/index.html) · [발표 대본](Presentation/SPEAKER_NOTES.md)
+- 발표자료·발표 대본은 공개 저장소에서 제외합니다.
 
 ## 참고한 공식 문서
 
@@ -129,3 +129,8 @@ node --check static/app.js
 
 조회수·저장·댓글 성과를 보장하지 않습니다. 사실 확인과 이미지 권리 확인은 운영자가 수행하며,
 영상 캡처를 크롭하거나 색상을 바꾸는 것만으로 사용 권한이 생기지는 않습니다.
+
+## 공개 저장소의 정보 보호
+
+실제 API 키, `.env`, 콘텐츠 DB, 생성 이미지·로그, 발표자료는 저장소에 포함하지 않습니다.
+`.env.example`의 빈 항목에 본인 키를 로컬에서 설정하세요. 이 저장소 공개는 앱 서버 공개나 인스타그램 계정 접근 권한 공유를 의미하지 않습니다.
