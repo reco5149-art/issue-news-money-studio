@@ -1,5 +1,6 @@
 'use strict';
 function parseSourceLink(raw){
+ if(raw.length>1000)throw new Error('출처 링크는 1,000자 이내로 입력하세요.');
  let u;try{u=new URL(raw.trim());}catch{throw new Error('https://로 시작하는 전체 링크를 입력하세요.');}
  if(!['http:','https:'].includes(u.protocol)||u.username||u.password)throw new Error('일반 웹 링크만 사용할 수 있습니다.');
  const host=u.hostname.toLowerCase(), parts=u.pathname.split('/').filter(Boolean);

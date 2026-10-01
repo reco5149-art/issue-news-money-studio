@@ -9,7 +9,7 @@ function applySource(){
  catch(e){$('sourceStatus').textContent=e.message;return false;}
 }
 $('sourceLoad').onclick=()=>{if(applySource()&&source){$('text').value='';$('message').textContent='출처의 자막이나 기사 본문을 붙여넣은 뒤 생성하세요. 이전 카드는 새로 생성하기 전까지 유지됩니다.';}};
-$('sourceUrl').oninput=()=>{source=null;$('sourcePreview').hidden=true;$('videoHost').replaceChildren();$('sourceStatus').textContent='변경한 링크를 적용하세요.';};
+$('sourceUrl').oninput=()=>{source=null;if($('text').value===sample)$('text').value='';$('sourcePreview').hidden=true;$('videoHost').replaceChildren();$('sourceStatus').textContent='변경한 링크를 적용하세요. 자막·본문은 직접 입력해야 합니다.';};
 $('videoLoad').onclick=()=>{if(!source?.videoId)return;const frame=document.createElement('iframe');frame.src='https://www.youtube-nocookie.com/embed/'+source.videoId;frame.title='유튜브 출처 영상';frame.allow='encrypted-media; fullscreen; picture-in-picture';frame.referrerPolicy='strict-origin-when-cross-origin';frame.allowFullscreen=true;$('videoHost').replaceChildren(frame);};
 function splitText(text,count){
  const sentences=text.trim().split(/\n+|(?<=[.!?。])\s+/u).map(x=>x.trim()).filter(Boolean);
@@ -30,7 +30,7 @@ function draw(){
  do{ctx.font=`${bodyFont}px sans-serif`;bodyLines=lines(ctx,cleanBody,930);if(bodyLines.length*bodyFont*1.6<=cv.height-235-y)break;bodyFont-=2;}while(bodyFont>=18);
  for(const line of bodyLines){ctx.fillText(line,75,y);y+=bodyFont*1.6;}
  ctx.strokeStyle=dark?'#58705c':'#b7c1a7';ctx.beginPath();ctx.moveTo(75,cv.height-180);ctx.lineTo(1005,cv.height-180);ctx.stroke();
- ctx.font='25px sans-serif';ctx.fillText('원문을 확인하고, 나의 생각을 더해보세요.',75,cv.height-115);
+ ctx.font='25px sans-serif';const cta=$('cta').value.trim()||'원문을 확인하고, 나의 생각을 더해보세요.';const ctaLines=lines(ctx,cta,930);ctx.fillText(ctaLines[0]+(ctaLines.length>1?'…':''),75,cv.height-115);
  ctx.font='20px sans-serif';ctx.fillText('시연용 원문 배치 · AI 생성 아님',75,cv.height-62);ctx.fillText(`${current+1} / ${cards.length}`,935,cv.height-62);
  $('position').textContent=`${current+1} / ${cards.length}`;$('badge').textContent=$('ratio').value;
  $('title').value=card.title;$('body').value=card.body;$('prev').disabled=current===0;$('next').disabled=current===cards.length-1;
