@@ -48,13 +48,21 @@ def asset_save(data,credit):
 async def create(req):
     if req.image_mode in ('upload','web','video'):
         if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():raise p.ProviderError('사용할 사진 또는 영상 캡처를 먼저 선택하세요.')
-    if req.image_mode=='ai':
-        asset=asset_save(await p.ai_image(req.text),'AI 생성 이미지');req.asset_id=asset['asset_id']
-    if req.image_mode=='design':req.asset_id=''
+    if req.image_mode in ('design','ai'):req.asset_id=''
     content=await p.ai_copy(req) if req.engine=='ai' else p.local_copy(req)
     slides=[Slide(**s).model_dump() for s in content['slides']]
+    if req.image_mode=='ai':
+        for i,slide in enumerate(slides):
+            prompt=(f'Card {i+1} of {len(slides)}. Create a distinct scene for THIS card. '
+                    f'Overall topic: {slides[0]["title"]}\n'
+                    f'This card title: {slide["title"]}\nThis card content: {slide["body"]}\n'
+                    'Use one concrete visual metaphor matching this content, consistent editorial photography style. '
+                    'Vary scene and composition across cards. No lettering, logos or fabricated news photographs.')
+            asset=asset_save(await p.ai_image(prompt),'AI 생성 이미지')
+            slide['asset_id']=asset['asset_id'];slide['image_credit']='AI 생성 이미지'
     credit=''
     if req.asset_id:credit=json.loads((st.ASSETS/(req.asset_id+'.json')).read_text(encoding='utf-8'))['credit']
+    if req.image_mode=='ai':credit='AI 생성 이미지 (카드별 생성)'
     caption=content['caption']
     if credit:caption=caption[:max(0,2193-len(credit))]+'\n이미지: '+credit
     post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
@@ -170,7 +178,26 @@ async def generate(req:Generate):return await create(req)
 async def edit(pid:str,req:Edit):
     async with LOCK:
         post=lookup(pid);writable(post)
+        old_slides=post['slides']
+        updated=[]
+        for i,item in enumerate(req.slides):
+            slide=item.model_dump()
+            aid=item.asset_id or (old_slides[i].get('asset_id') if i<len(old_slides) else None) or post.get('asset_id')
+            if aid:
+                if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
+                    raise p.ProviderError('사용할 카드 사진을 다시 선택하세요.')
+                slide['asset_id']=aid
+                slide['image_credit']=json.loads((st.ASSETS/(aid+'.json')).read_text(encoding='utf-8'))['credit']
+            updated.append(slide)
         post.update(req.model_dump());post['slides']=[s.model_dump() for s in req.slides]
+        post['slides']=updated
+        credits=list(dict.fromkeys(s.get('image_credit','') for s in updated if s.get('image_credit')))
+        post['image_credit']=' / '.join(credits)
+        if credits and post['image_credit'] not in post['caption']:
+            suffix='\n이미지: '+post['image_credit']
+            post['caption']=post['caption'][:max(0,2200-len(suffix))]+suffix
+        if any((s.get('asset_id') or post.get('asset_id')) != ((old_slides[i].get('asset_id') or post.get('asset_id')) if i<len(old_slides) else None) for i,s in enumerate(updated)):
+            post['rights_checked']=False
         post['images']=await asyncio.to_thread(render,post);st.save(post)
         return post
 

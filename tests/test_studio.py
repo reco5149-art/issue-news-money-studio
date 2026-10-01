@@ -61,6 +61,42 @@ def test_image_upload(client):
     p=generate(client,image_mode='upload',asset_id=asset['asset_id'])
     assert p['image_credit'] and '이미지:' in p['caption']
 
+def test_ai_images_follow_each_slide_and_survive_edit(client,monkeypatch):
+    prompts=[]
+    async def fake_image(prompt):
+        prompts.append(prompt)
+        buf=io.BytesIO();Image.new('RGB',(200,200),['red','green','blue'][len(prompts)-1]).save(buf,format='PNG')
+        return buf.getvalue()
+    monkeypatch.setattr(providers,'ai_image',fake_image)
+    p=generate(client,image_mode='ai')
+    ids=[s['asset_id'] for s in p['slides']]
+    assert len(set(ids))==3 and len(prompts)==3
+    for i,s in enumerate(p['slides']):
+        assert s['title'] in prompts[i] and s['body'] in prompts[i]
+    colors=[Image.open(st.MEDIA/p['id']/f'{i+1:02}.png').getpixel((500,180)) for i in range(3)]
+    assert len(set(colors))==3
+    body={'slides':[{'title':s['title'],'body':s['body']} for s in p['slides']],
+          'caption':p['caption'],'source_name':p['source_name'],'source_url':''}
+    r=client.put('/api/posts/'+p['id'],json=body)
+    assert r.status_code==200
+    assert [s['asset_id'] for s in r.json()['slides']]==ids
+
+def test_replace_one_photo_preserves_others_and_resets_rights(client):
+    p=generate(client)
+    buf=io.BytesIO();Image.new('RGB',(200,200),'orange').save(buf,format='PNG')
+    asset=client.post('/api/assets/upload',files={'file':('card.png',buf.getvalue(),'image/png')}).json()
+    body={'slides':p['slides'],'caption':p['caption'],'source_name':p['source_name'],
+          'source_url':'','facts_checked':True,'rights_checked':True}
+    body['slides'][1]['asset_id']=asset['asset_id']
+    r=client.put('/api/posts/'+p['id'],json=body)
+    assert r.status_code==200
+    slides=r.json()['slides']
+    assert slides[1]['asset_id']==asset['asset_id']
+    assert not slides[0]['asset_id'] and not slides[2]['asset_id']
+    assert not r.json()['rights_checked']
+    body['slides'][1]['asset_id']='../private'
+    assert client.put('/api/posts/'+p['id'],json=body).status_code==422
+
 def configure_instagram(monkeypatch):
     for k,v in {'INSTAGRAM_ACCESS_TOKEN':'test-only','INSTAGRAM_USER_ID':'123','PUBLIC_MEDIA_BASE_URL':'https://example.com/media'}.items():monkeypatch.setenv(k,v)
 

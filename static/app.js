@@ -310,7 +310,7 @@ $("image-mode").onchange = () => {
   }
   if (mode === "ai")
     box.innerHTML =
-      '<p class="notice">API 사용료가 발생합니다. 실제 보도사진이 아닌 주제 설명용 이미지 1개를 만들어 카드 배경으로 사용합니다.</p>';
+      '<p class="notice">API 사용료가 발생합니다. 문안을 만든 뒤 각 카드의 제목·본문에 맞는 설명용 이미지를 1장씩 생성합니다. 카드 5장이면 이미지 5장 비용과 대기 시간이 발생합니다. 실제 보도사진이 아닙니다.</p>';
 };
 function renderLibrary() {
   const filter = $("library-filter").value;
@@ -341,9 +341,26 @@ function openEditor() {
   $("editor-slides").innerHTML = p.slides
     .map(
       (s, i) =>
-        `<div class="slide-editor"><small>${String(i + 1).padStart(2, "0")} / ${p.slides.length}</small><label for="title-${i}">제목</label><input id="title-${i}" value="${esc(s.title)}" maxlength="65"><label for="body-${i}">본문</label><textarea id="body-${i}" rows="3" maxlength="230">${esc(s.body)}</textarea></div>`,
+        `<div class="slide-editor"><small>${String(i + 1).padStart(2, "0")} / ${p.slides.length}</small><label for="title-${i}">제목</label><input id="title-${i}" value="${esc(s.title)}" maxlength="65"><label for="photo-${i}">이 카드 사진 교체</label><input type="file" id="photo-${i}" accept="image/*" data-asset-id="${esc(s.asset_id || p.asset_id || "")}" ${writable ? "" : "disabled"}><small>선택한 사진은 이 카드에만 적용됩니다. 문안 변경 후에는 사진도 다시 확인하세요.</small><label for="body-${i}">본문</label><textarea id="body-${i}" rows="3" maxlength="230">${esc(s.body)}</textarea></div>`,
     )
     .join("");
+  p.slides.forEach((_, i) => {
+    const input = $("photo-" + i);
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      $("save-edit").disabled = true;
+      input.disabled = true;
+      try {
+        const form = new FormData(); form.append("file", file);
+        const asset = await api("/api/assets/upload", {method: "POST", body: form});
+        input.dataset.assetId = asset.asset_id;
+        $("rights-check").checked = false;
+        toast(`${i + 1}번 카드 사진을 선택했습니다. 저장하면 반영됩니다.`);
+      } catch (e) { toast(e.message); }
+      finally { input.disabled = !writable; $("save-edit").disabled = !writable || Array.from(document.querySelectorAll('[id^="photo-"]')).some(x => x.disabled); }
+    };
+  });
   $("edit-caption").value = p.caption;
   $("edit-source-name").value = p.source_name;
   $("edit-source-url").value = p.source_url;
@@ -363,6 +380,7 @@ $("save-edit").onclick = () =>
       slides: p.slides.map((_, i) => ({
         title: $("title-" + i).value,
         body: $("body-" + i).value,
+        asset_id: $("photo-" + i).dataset.assetId || null,
       })),
       caption: $("edit-caption").value,
       source_name: $("edit-source-name").value,

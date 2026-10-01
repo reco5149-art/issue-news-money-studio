@@ -17,6 +17,7 @@ class Generate(BaseModel):
 class Slide(BaseModel):
     title: str = Field(min_length=1, max_length=65)
     body: str = Field(default='', max_length=230)
+    asset_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
 
 class Edit(BaseModel):
     slides: list[Slide] = Field(min_length=1, max_length=10)

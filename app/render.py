@@ -34,9 +34,9 @@ def fit(draw, text, xy, width, height, size, color, bold=False):
 def render(post):
     out=MEDIA/post['id']; out.mkdir(exist_ok=True)
     w,h=SIZES[post['ratio']]; accent=COLORS[post['category']]
-    asset=ASSETS/(post.get('asset_id','')+'.jpg')
     paths=[]
     for i,slide in enumerate(post['slides']):
+        asset=ASSETS/((slide.get('asset_id') or post.get('asset_id',''))+'.jpg')
         im=Image.new('RGB',(w,h),'#141d1b'); d=ImageDraw.Draw(im)
         if asset.is_file():
             photo=ImageOps.fit(Image.open(asset).convert('RGB'),(w,int(h*.54)))
@@ -62,7 +62,8 @@ def render(post):
         d.text((64,h-97),credit,font=font(22),fill='#b4c1b7')
         d.text((64,h-62),'@issue_news_money',font=font(22,True),fill='#dfe6db')
         d.text((w-150,h-66),f'{i+1:02} / {len(post["slides"]):02}',font=font(24),fill=accent)
-        if post['image_mode']=='ai':d.text((64,136),'AI 생성 이미지',font=font(23),fill='#ffffff')
+        if slide.get('image_credit')=='AI 생성 이미지' or (post['image_mode']=='ai' and not slide.get('image_credit')):
+            d.text((64,136),'AI 생성 이미지',font=font(23),fill='#ffffff')
         im.save(out/f'{i+1:02}.png'); im.save(out/f'{i+1:02}.jpg',quality=93)
         paths.append(f'/media/{post["id"]}/{i+1:02}.png')
     return paths
