@@ -97,6 +97,31 @@ def test_replace_one_photo_preserves_others_and_resets_rights(client):
     body['slides'][1]['asset_id']='../private'
     assert client.put('/api/posts/'+p['id'],json=body).status_code==422
 
+def test_video_frames_to_individual_cards(client,monkeypatch):
+    def fake_capture(url,count,data):
+        out=[]
+        for i in range(count):
+            b=io.BytesIO();Image.new('RGB',(100,100),['red','blue','green'][i]).save(b,format='PNG')
+            out.append((i*10,b.getvalue()))
+        return out
+    monkeypatch.setattr(main,'youtube_frames',fake_capture)
+    response=client.post('/api/video/frames',json={'url':'https://youtu.be/NHXFgBSAwS8','count':3})
+    assert response.status_code==200
+    ids=[a['asset_id'] for a in response.json()['assets']]
+    p=generate(client,image_mode='video',video_asset_ids=ids)
+    assert [s['asset_id'] for s in p['slides']]==ids
+    assert '영상 캡처' in p['slides'][1]['image_credit']
+    bad=client.post('/api/generate',json={'text':'영상 캡처 테스트입니다.','image_mode':'video','video_asset_ids':['../../bad']})
+    assert bad.status_code==400
+
+def test_video_url_and_timestamps():
+    from app.video_frames import youtube_url,capture_times
+    assert youtube_url('https://youtu.be/NHXFgBSAwS8?t=5')=='https://www.youtube.com/watch?v=NHXFgBSAwS8'
+    assert capture_times(100,4)==[12.5,37.5,62.5,87.5]
+    for url in ['http://127.0.0.1/video','https://youtube.com.evil.com/watch?v=NHXFgBSAwS8','file:///video','https://user@youtube.com/watch?v=NHXFgBSAwS8']:
+        with pytest.raises(ValueError):youtube_url(url)
+    with pytest.raises(ValueError):capture_times(float('inf'),3)
+
 def configure_instagram(monkeypatch):
     for k,v in {'INSTAGRAM_ACCESS_TOKEN':'test-only','INSTAGRAM_USER_ID':'123','PUBLIC_MEDIA_BASE_URL':'https://example.com/media'}.items():monkeypatch.setenv(k,v)
 

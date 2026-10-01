@@ -19,11 +19,14 @@ from .models import Generate, Edit, Slide, Schedule, DailySchedule, UrlInput, As
 from . import providers as p
 from .render import render
 from .publishing import publish
+from .models import VideoFrames
+from .video_frames import youtube_frames
 
 load_dotenv(st.ROOT/'.env')
 st.init()
 LOCK=asyncio.Lock()
 DAILY_LOCK=asyncio.Lock()
+VIDEO_LOCK=asyncio.Lock()
 
 def lookup(pid):
     obj=st.get(pid)
@@ -46,11 +49,22 @@ def asset_save(data,credit):
     return {'asset_id':aid,'url':'/assets/'+aid+'.jpg','credit':credit}
 
 async def create(req):
-    if req.image_mode in ('upload','web','video'):
+    if req.image_mode=='video' and req.video_asset_ids:
+        for aid in req.video_asset_ids:
+            if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
+                raise p.ProviderError('영상 장면을 다시 캡처하세요.')
+        req.asset_id=''
+    elif req.image_mode in ('upload','web','video'):
         if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():raise p.ProviderError('사용할 사진 또는 영상 캡처를 먼저 선택하세요.')
     if req.image_mode in ('design','ai'):req.asset_id=''
     content=await p.ai_copy(req) if req.engine=='ai' else p.local_copy(req)
     slides=[Slide(**s).model_dump() for s in content['slides']]
+    if req.image_mode=='video' and req.video_asset_ids:
+        if len(req.video_asset_ids)<len(slides):raise p.ProviderError('카드 장수만큼 장면을 다시 캡처하세요.')
+        for i,slide in enumerate(slides):
+            aid=req.video_asset_ids[min(len(req.video_asset_ids)-1,int((i+.5)*len(req.video_asset_ids)/len(slides)))]
+            slide['asset_id']=aid
+            slide['image_credit']=json.loads((st.ASSETS/(aid+'.json')).read_text(encoding='utf-8'))['credit']
     if req.image_mode=='ai':
         for i,slide in enumerate(slides):
             prompt=(f'Card {i+1} of {len(slides)}. Create a distinct scene for THIS card. '
@@ -63,6 +77,7 @@ async def create(req):
     credit=''
     if req.asset_id:credit=json.loads((st.ASSETS/(req.asset_id+'.json')).read_text(encoding='utf-8'))['credit']
     if req.image_mode=='ai':credit='AI 생성 이미지 (카드별 생성)'
+    if req.image_mode=='video' and req.video_asset_ids:credit='영상 구간별 자동 캡처 — 장면별 출처는 편집 정보에 기록. 이용 권한 확인 필요'
     caption=content['caption']
     if credit:caption=caption[:max(0,2193-len(credit))]+'\n이미지: '+credit
     post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
@@ -248,6 +263,14 @@ async def upload(file:UploadFile=File(...)):
     data=await file.read(15_000_001)
     if len(data)>15_000_000:raise HTTPException(413,'이미지는 15MB 이하만 지원합니다.')
     return asset_save(data,'직접 업로드 — 사용 권한 확인 필요')
+
+@app.post('/api/video/frames')
+async def video_frames(req:VideoFrames):
+    if VIDEO_LOCK.locked():raise HTTPException(409,'영상 캡처가 진행 중입니다. 완료 후 다시 시도하세요.')
+    async with VIDEO_LOCK:
+        frames=await asyncio.to_thread(youtube_frames,req.url,req.count,st.DATA)
+        assets=[{**asset_save(data,f'영상 캡처 {at:.1f}초 / {req.url} / 이용 권한 확인 필요'),'at':at} for at,data in frames]
+        return {'assets':assets,'note':'영상 구간을 나눠 자동 캡처했습니다. 문장 의미 분석이나 자막 추출은 아니므로 장면과 문안의 관계를 검토하세요.'}
 
 @app.post('/api/assets/web')
 async def web_asset(req:AssetUrl):

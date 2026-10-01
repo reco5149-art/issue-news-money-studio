@@ -9,6 +9,7 @@ class Generate(BaseModel):
     engine: Literal['local','ai'] = 'local'
     image_mode: Literal['design','upload','web','video','ai'] = 'design'
     asset_id: str = ''
+    video_asset_ids: list[str] = Field(default_factory=list,max_length=10)
     source_url: str = Field(default='', max_length=2000)
     source_name: str = Field(default='직접 입력', min_length=1, max_length=150)
     tone: Literal['후킹형','정보형','공감형','질문형'] = '후킹형'
@@ -38,6 +39,9 @@ class DailySchedule(BaseModel):
 
 class UrlInput(BaseModel):
     url: str = Field(max_length=2000)
+
+class VideoFrames(UrlInput):
+    count: int = Field(default=5,ge=1,le=10)
 
 class AssetUrl(UrlInput):
     credit: str = Field(min_length=1, max_length=1000)

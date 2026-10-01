@@ -186,7 +186,13 @@ $("generate-btn").onclick = () =>
   busy($("generate-btn"), async () => {
     const text = $("source-text").value.trim();
     if (text.length < 5) throw Error("주제나 원고를 5자 이상 입력하세요.");
+    let videoAssets = [];
+    if ($("image-mode").value === "video") {
+      toast("영상에서 카드별 장면을 자동 캡처하고 있습니다.");
+      videoAssets = await captureVideoFrames(Number($("count").value) || 10);
+    }
     const body = {
+      video_asset_ids: videoAssets,
       text,
       category: $("category").value,
       tone: $("tone").value,
@@ -213,6 +219,43 @@ function setAsset(a) {
   $("asset-preview").src = a.url;
   $("asset-preview").hidden = false;
   toast("이미지를 선택했습니다. 생성 시 카드에 적용됩니다.");
+}
+function waitVideo(video, event, action) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => done(new Error("영상 읽기가 지연됩니다. MP4 파일을 다시 선택하세요.")), 15000);
+    const ok = () => done();
+    const fail = () => done(new Error("브라우저에서 읽을 수 없는 영상입니다. MP4 파일을 선택하세요."));
+    function done(error) { clearTimeout(timer); video.removeEventListener(event, ok); video.removeEventListener("error", fail); error ? reject(error) : resolve(); }
+    video.addEventListener(event, ok, {once:true}); video.addEventListener("error", fail, {once:true});
+    if (action) action();
+  });
+}
+async function captureVideoFrames(count) {
+  const v = $("local-video");
+  if (!$("video-file")?.files.length) {
+    const url = $("source-url").value.trim() || $("source-link").value.trim();
+    if (!url) throw Error("영상 파일을 선택하거나 유튜브 링크를 가져오세요.");
+    const result = await api("/api/video/frames", {method:"POST", body:JSON.stringify({url,count})});
+    toast(result.note);
+    return result.assets.map(a => a.asset_id);
+  }
+  if (v.readyState < 2) await waitVideo(v, "loadeddata");
+  if (!Number.isFinite(v.duration) || v.duration <= 0 || v.duration > 1200) throw Error("20분 이하의 일반 영상 파일을 선택하세요.");
+  v.pause();
+  const canvas = document.createElement("canvas");
+  const scale = Math.min(1, 1280 / v.videoWidth);
+  canvas.width = Math.round(v.videoWidth * scale); canvas.height = Math.round(v.videoHeight * scale);
+  const assets = [];
+  for (let i=0; i<count; i++) {
+    const at = v.duration * (i + .5) / count;
+    if (Math.abs(v.currentTime - at) > .001) await waitVideo(v, "seeked", () => { v.currentTime = at; });
+    canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", .92));
+    if (!blob) throw Error("영상 장면을 캡처하지 못했습니다.");
+    const form = new FormData(); form.append("file", blob, `capture-${i+1}.jpg`);
+    const asset = await api("/api/assets/upload", {method:"POST",body:form}); assets.push(asset.asset_id);
+  }
+  return assets;
 }
 let videoObjectUrl = null;
 $("image-mode").onchange = () => {
@@ -244,32 +287,18 @@ $("image-mode").onchange = () => {
   }
   if (mode === "video") {
     box.innerHTML =
-      '<label for="video-file">사용 권한이 있는 영상 파일</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls></video><button id="capture-btn" class="secondary" style="margin-top:10px">현재 장면 캡처</button><p class="hint">재생 위치를 선택하세요. 캡처에 카드 비율 크롭과 색감 보정이 적용됩니다.</p>';
+      '<label for="video-file">영상 파일 (선택 · 유튜브 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">카드뉴스 생성하기를 누르면 영상 구간별 장면을 자동 캡처해 카드마다 배치합니다. 파일이 없으면 위 출처 URL의 공개 유튜브 영상을 사용합니다. 20분·150MB 이하. 문안과 장면은 게시 전에 확인하세요.</p>';
     $("video-file").onchange = () => {
       if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
       const f = $("video-file").files[0];
       if (f) {
+        if (f.size > 150000000) { toast("영상은 150MB 이하로 선택하세요.", true); $("video-file").value = ""; return; }
         videoObjectUrl = URL.createObjectURL(f);
         $("local-video").src = videoObjectUrl;
+        $("local-video").hidden = false;
       }
     };
-    $("capture-btn").onclick = () =>
-      busy($("capture-btn"), async () => {
-        const v = $("local-video");
-        if (v.readyState < 2)
-          throw Error("영상이 로드된 뒤 원하는 장면으로 이동하세요.");
-        v.pause();
-        const c = document.createElement("canvas");
-        c.width = v.videoWidth;
-        c.height = v.videoHeight;
-        c.getContext("2d").drawImage(v, 0, 0);
-        const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", 0.92));
-        const form = new FormData();
-        form.append("file", blob, "capture.jpg");
-        setAsset(
-          await api("/api/assets/upload", { method: "POST", body: form }),
-        );
-      });
+
   }
   if (mode === "web") {
     box.innerHTML =
