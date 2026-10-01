@@ -497,7 +497,7 @@ async function editorAction(fn) {
     editorWorking = false;
     controls.forEach((el, i) => el.disabled = disabled[i]);
     const writable = ["draft", "failed"].includes(state.current.status);
-    ["save-edit", "evaluate-post", "schedule-post"].forEach(id => $(id).disabled = !writable);
+    ["save-edit", "evaluate-post", "schedule-post", "approve-post"].forEach(id => $(id).disabled = !writable);
   }
 }
 $("save-edit").onclick = () => editorAction(async () => {
@@ -515,7 +515,7 @@ function reservationReason(p) {
       c.sync < 25 ? `사진 일치 ${c.sync}/25점 미달` : "",
       c.grounding < 20 ? `원고 근거 ${c.grounding}/20점 미달` : "",
       c.hook+c.sync+c.grounding+c.cta < 75 ? "총점 75점 미달" : ""
-    ].filter(Boolean).join(", ")})`).join(" · ") + ". 위 수정 제안을 반영한 후 다시 평가하세요.";
+    ].filter(Boolean).join(", ")})`).join(" · ") + ". 수정 후 재평가하거나, 사실·사용권 확인 후 ‘점수 경고 확인 · 게시 승인’을 누르세요.";
   }
   if (q.status !== "passed") return "예약 전 저장된 내용 다시 평가가 필요합니다.";
   if (!p.facts_checked || !p.rights_checked) return "평가 통과. 사실관계와 사진 사용권을 직접 확인하고 두 항목에 체크하세요.";
@@ -523,8 +523,9 @@ function reservationReason(p) {
 }
 function renderQuality(p) {
   const q = p.quality || {};
+  $("approve-post").hidden = q.status !== "blocked" || (q.cards || []).some(c => c.critical);
   const labels = {evaluating:"평가 중",passed:"통과",blocked:"게시 보류",stale:"수정 후 재평가 필요",error:"평가 실패"};
-  $("quality-result").innerHTML = `<p><b>${esc(labels[q.status] || "평가 필요")}</b> ${esc(q.message || "")}</p>` + (q.cards || []).map(c => `<p><b>${c.card}번 · ${c.hook+c.sync+c.grounding+c.cta}/100점${c.critical ? " · 중대 오류" : ""}</b><br>후킹 ${c.hook}/25 · 사진 일치 ${c.sync}/40 · 원고 근거 ${c.grounding}/25 · CTA ${c.cta}/10<br>${esc(c.reason)}<br>수정 제안: ${esc(c.fix)}</p>`).join("");
+  $("quality-result").innerHTML = `<p><b>${esc(q.manual_approved ? "사용자 게시 승인" : labels[q.status] || "평가 필요")}</b> ${esc(q.message || "")}</p>` + (q.cards || []).map(c => `<p><b>${c.card}번 · ${c.hook+c.sync+c.grounding+c.cta}/100점${c.critical ? " · 중대 오류" : ""}</b><br>후킹 ${c.hook}/25 · 사진 일치 ${c.sync}/40 · 원고 근거 ${c.grounding}/25 · CTA ${c.cta}/10<br>${esc(c.reason)}<br>수정 제안: ${esc(c.fix)}</p>`).join("");
   $("editor-notice").textContent = reservationReason(p);
   $("schedule-post").disabled = editorWorking || !["draft","failed"].includes(p.status);
 }
@@ -543,6 +544,12 @@ $("evaluate-post").onclick = () => editorAction(async () => {
   catch (e) { state.current.quality = {status:"error", message:e.message}; renderQuality(state.current); throw e; }
   renderQuality(state.current); showPreview(); await refresh();
   toast(state.current.quality.status === "passed" ? "평가를 통과했습니다. 사실·권한 확인 후 예약하세요." : "게시를 보류했습니다. 수정 제안을 확인하세요.");
+});
+$("approve-post").onclick = () => editorAction(async () => {
+  if (editorDirty) await saveEditor();
+  state.current = await api(`/api/posts/${state.current.id}/approve`, {method:"POST"});
+  renderQuality(state.current); showPreview(); await refresh();
+  toast("게시 승인 완료. 날짜와 시간을 선택해 예약하세요.");
 });
 $("schedule-post").onclick = () =>
   editorAction(async () => {

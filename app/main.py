@@ -282,6 +282,14 @@ async def evaluate_post(pid:str):
         current['quality']=result;st.save(current)
         return current
 
+@app.post('/api/posts/{pid}/approve')
+async def approve_post(pid:str):
+    async with LOCK:
+        post=lookup(pid);writable(post)
+        quality.approve_manual(post);st.save(post)
+        st.log('사용자 게시 승인: '+pid)
+        return post
+
 @app.post('/api/posts/{pid}/schedule')
 async def schedule(pid:str,req:Schedule):
     async with LOCK:

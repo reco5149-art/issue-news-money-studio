@@ -42,7 +42,8 @@ def ensure_passed(post):
         scores=Review.model_validate({'cards':q.get('cards')}).cards
         valid=(q.get('version')==VERSION and q.get('status')=='passed' and
                q.get('fingerprint')==fingerprint(post) and
-               [c.card for c in scores]==list(range(1,len(post['slides'])+1)) and all(passed(c) for c in scores))
+               [c.card for c in scores]==list(range(1,len(post['slides'])+1)) and (all(passed(c) for c in scores) or
+               (q.get("manual_approved") is True and bool(q.get("approved_at")) and not any(c.critical for c in scores))))
     except (ValueError,OSError,TypeError):valid=False
     if not valid:raise p.ProviderError('사진·문안 자가평가 통과가 필요합니다. 수정 내용을 저장하고 다시 평가하세요.')
 
@@ -92,3 +93,20 @@ async def evaluate(post):
     return {'version':VERSION,'fingerprint':digest,'checked_at':st.now(),
             'status':'passed' if all(passed(c) for c in scores) else 'blocked',
             'cards':[c.model_dump() for c in scores]}
+
+
+def approve_manual(post):
+    q=post.get('quality') or {}
+    if not post.get('facts_checked') or not post.get('rights_checked'):
+        raise p.ProviderError('사실관계와 이미지 사용 권한을 확인하고 저장하세요.')
+    try:
+        scores=Review.model_validate({'cards':q.get('cards')}).cards
+        valid=(q.get('version')==VERSION and q.get('status') in ('passed','blocked') and
+               q.get('fingerprint')==fingerprint(post) and
+               [c.card for c in scores]==list(range(1,len(post['slides'])+1)) and
+               not any(c.critical for c in scores))
+    except (ValueError,OSError,TypeError):valid=False
+    if not valid:raise p.ProviderError('최신 평가가 필요하거나 중대 오류가 있습니다. 수정 후 다시 평가하세요.')
+    post['quality']={**q,'status':'passed','manual_approved':True,'approved_at':st.now(),
+                     'message':'점수 경고를 확인한 사용자 게시 승인. AI 점수 자체는 변경되지 않았습니다.'}
+    return post
