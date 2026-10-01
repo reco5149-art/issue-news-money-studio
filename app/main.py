@@ -19,9 +19,10 @@ from .models import Generate, Edit, Slide, Schedule, DailySchedule, UrlInput, As
 from . import providers as p
 from .render import render
 from .publishing import publish
-from .models import VideoFrames
+from .models import VideoFrames, FrameCleanup
 from .video_frames import youtube_frames
 from . import quality
+from .frame_cleanup import clean_frames
 
 load_dotenv(st.ROOT/'.env')
 st.init()
@@ -295,11 +296,25 @@ async def upload(file:UploadFile=File(...)):
 
 @app.post('/api/video/frames')
 async def video_frames(req:VideoFrames):
+    p.require('OPENAI_API_KEY')
     if VIDEO_LOCK.locked():raise HTTPException(409,'영상 캡처가 진행 중입니다. 완료 후 다시 시도하세요.')
     async with VIDEO_LOCK:
-        frames=await asyncio.to_thread(youtube_frames,req.url,req.count,st.DATA)
-        assets=[{**asset_save(data,f'영상 캡처 {at:.1f}초 / {req.url} / 이용 권한 확인 필요'),'at':at} for at,data in frames]
+        frames=await asyncio.to_thread(youtube_frames,req.url,min(20,req.count*3),st.DATA)
+        frames=await clean_frames(frames,req.count)
+        assets=[{**asset_save(data,f'영상 캡처 {at:.1f}초 / 방송 그래픽 크롭 / {req.url} / 이용 권한 확인 필요'),'at':at} for at,data in frames]
         return {'assets':assets,'note':'영상 구간을 나눠 자동 캡처했습니다. 문장 의미 분석이나 자막 추출은 아니므로 장면과 문안의 관계를 검토하세요.'}
+
+@app.post('/api/video/clean-frames')
+async def clean_uploaded_frames(req:FrameCleanup):
+    if VIDEO_LOCK.locked():raise HTTPException(409,'영상 캡처가 진행 중입니다. 완료 후 다시 시도하세요.')
+    frames=[]
+    for i,aid in enumerate(req.asset_ids):
+        if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
+            raise p.ProviderError('영상 캡처를 다시 선택하세요.')
+        frames.append((i,(st.ASSETS/(aid+'.jpg')).read_bytes()))
+    async with VIDEO_LOCK:
+        cleaned=await clean_frames(frames,req.count)
+    return {'assets':[asset_save(data,'보유 영상 캡처 / 방송 그래픽 크롭 / 이용 권한 확인 필요') for _,data in cleaned]}
 
 @app.post('/api/assets/web')
 async def web_asset(req:AssetUrl):

@@ -6,7 +6,7 @@ import os
 from pydantic import BaseModel, Field, ConfigDict
 from . import storage as st, providers as p
 
-VERSION='card-review-v1'
+VERSION='card-review-v2'
 
 class CardScore(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
@@ -61,6 +61,8 @@ async def evaluate(post):
         'sync 0~40: 사진의 눈에 보이는 인물 행동·사물·상황이 문구와 일치하는가. '
         '같은 사람이나 비슷한 주제인 것만으로 구체적인 행동·감정을 뒷받침하지 못한다. '
         '읽을 수 없거나 사진과 주장 연결을 판단할 수 없으면 sync 29 이하. '
+        '사건과 무관한 구독·채널 홍보·엔딩 화면은 critical=true, sync 10 이하. '
+        '불필요한 방송 로고·구독 문구·방송 자막이 남아 주제 집중을 방해하면 sync 29 이하로 하고 크롭이나 다른 장면을 제안한다. '
         '글자만 있는 자체 디자인은 사진 부재 자체로 감점하지 말고 시각적 가독성과 문안 일치를 평가한다. '
         '명시적으로 표시한 AI 설명용 비유는 실제 보도사진인 척하지 않는지 평가한다. '
         'grounding 0~25: 제공 원고로 제목·본문·캡션의 주장을 뒷받침할 수 있는가. '

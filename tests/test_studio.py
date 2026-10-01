@@ -101,12 +101,15 @@ def test_replace_one_photo_preserves_others_and_resets_rights(client):
     assert client.put('/api/posts/'+p['id'],json=body).status_code==422
 
 def test_video_frames_to_individual_cards(client,monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY','test-only')
     def fake_capture(url,count,data):
         out=[]
         for i in range(count):
-            b=io.BytesIO();Image.new('RGB',(100,100),['red','blue','green'][i]).save(b,format='PNG')
+            b=io.BytesIO();Image.new('RGB',(100,100),['red','blue','green'][i%3]).save(b,format='PNG')
             out.append((i*10,b.getvalue()))
         return out
+    async def fake_cleanup(frames,count):return frames[:count]
+    monkeypatch.setattr(main,'clean_frames',fake_cleanup)
     monkeypatch.setattr(main,'youtube_frames',fake_capture)
     response=client.post('/api/video/frames',json={'url':'https://youtu.be/NHXFgBSAwS8','count':3})
     assert response.status_code==200
@@ -231,3 +234,17 @@ def test_daily_dedupe(client,monkeypatch):
     monkeypatch.setattr(providers,'discover',discover);monkeypatch.setattr(providers,'extract',extract);monkeypatch.setattr(providers,'ai_copy',ai)
     r=client.post('/api/daily/run');assert r.status_code==200 and len(r.json()['created'])==1
     assert client.post('/api/daily/run').status_code==400
+
+
+def test_uploaded_frames_cleaned_to_new_assets(client,monkeypatch):
+    b=io.BytesIO();Image.new('RGB',(640,480),'blue').save(b,format='JPEG')
+    original=main.asset_save(b.getvalue(),'original source')
+    async def fake(frames,count):
+        assert count==1 and len(frames)==1
+        return frames
+    monkeypatch.setattr(main,'clean_frames',fake)
+    response=client.post('/api/video/clean-frames',json={'asset_ids':[original['asset_id']],'count':1})
+    assert response.status_code==200
+    assert response.json()['assets'][0]['asset_id']!=original['asset_id']
+    assert (st.ASSETS/(original['asset_id']+'.jpg')).exists()
+    assert client.post('/api/video/clean-frames',json={'asset_ids':['../../bad'],'count':1}).status_code==400

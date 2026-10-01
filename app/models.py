@@ -43,5 +43,9 @@ class UrlInput(BaseModel):
 class VideoFrames(UrlInput):
     count: int = Field(default=5,ge=1,le=10)
 
+class FrameCleanup(BaseModel):
+    asset_ids: list[str] = Field(min_length=1,max_length=20)
+    count: int = Field(ge=1,le=10)
+
 class AssetUrl(UrlInput):
     credit: str = Field(min_length=1, max_length=1000)

@@ -246,8 +246,9 @@ async function captureVideoFrames(count) {
   const scale = Math.min(1, 1280 / v.videoWidth);
   canvas.width = Math.round(v.videoWidth * scale); canvas.height = Math.round(v.videoHeight * scale);
   const assets = [];
-  for (let i=0; i<count; i++) {
-    const at = v.duration * (i + .5) / count;
+  const candidates = Math.min(20, count * 3);
+  for (let i=0; i<candidates; i++) {
+    const at = v.duration * (i + .5) / candidates;
     if (Math.abs(v.currentTime - at) > .001) await waitVideo(v, "seeked", () => { v.currentTime = at; });
     canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", .92));
@@ -255,7 +256,8 @@ async function captureVideoFrames(count) {
     const form = new FormData(); form.append("file", blob, `capture-${i+1}.jpg`);
     const asset = await api("/api/assets/upload", {method:"POST",body:form}); assets.push(asset.asset_id);
   }
-  return assets;
+  const cleaned = await api("/api/video/clean-frames", {method:"POST",body:JSON.stringify({asset_ids:assets,count})});
+  return cleaned.assets.map(a => a.asset_id);
 }
 let videoObjectUrl = null;
 $("image-mode").onchange = () => {
@@ -287,7 +289,7 @@ $("image-mode").onchange = () => {
   }
   if (mode === "video") {
     box.innerHTML =
-      '<label for="video-file">영상 파일 (선택 · 유튜브 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">카드뉴스 생성하기를 누르면 영상 구간별 장면을 자동 캡처해 카드마다 배치합니다. 파일이 없으면 위 출처 URL의 공개 유튜브 영상을 사용합니다. 20분·150MB 이하. 문안과 장면은 게시 전에 확인하세요.</p>';
+      '<label for="video-file">영상 파일 (선택 · 유튜브 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">카드뉴스 생성하기를 누르면 영상 구간별 장면을 자동 캡처해 카드마다 배치합니다. 파일이 없으면 위 출처 URL의 공개 유튜브 영상을 사용합니다. 20분·150MB 이하. AI가 홍보 화면을 제외하고 로고·방송 자막을 크롭합니다. 정리 API 비용이 발생하며 핵심 장면이 잘렸는지 확인하세요.</p>';
     $("video-file").onchange = () => {
       if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
       const f = $("video-file").files[0];
