@@ -5,7 +5,8 @@ from datetime import datetime,timedelta
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
-from app import main,storage as st,providers,publishing,render
+from app import main,storage as st,providers,publishing,render,quality
+REAL_EVALUATE=quality.evaluate
 
 @pytest.fixture
 def client(tmp_path,monkeypatch):
@@ -16,6 +17,8 @@ def client(tmp_path,monkeypatch):
     monkeypatch.setattr(render,'ASSETS',tmp_path/'assets')
     for key in ['OPENAI_API_KEY','NAVER_CLIENT_ID','NAVER_CLIENT_SECRET','YOUTUBE_API_KEY','INSTAGRAM_ACCESS_TOKEN','INSTAGRAM_USER_ID','PUBLIC_MEDIA_BASE_URL']:
         monkeypatch.delenv(key,raising=False)
+    async def no_review(post):raise providers.ProviderError('test review unavailable')
+    monkeypatch.setattr(quality,'evaluate',no_review)
     st.init()
     return TestClient(main.app)
 
@@ -122,15 +125,69 @@ def test_video_url_and_timestamps():
         with pytest.raises(ValueError):youtube_url(url)
     with pytest.raises(ValueError):capture_times(float('inf'),3)
 
+def approve_quality(p):
+    p['quality']={'status':'passed','version':quality.VERSION,'fingerprint':quality.fingerprint(p),
+                  'cards':[{'card':i+1,'hook':25,'sync':40,'grounding':25,'cta':10,'critical':False,'reason':'test','fix':'test'} for i in range(len(p['slides']))]}
+    st.save(p)
+
+
 def configure_instagram(monkeypatch):
     for k,v in {'INSTAGRAM_ACCESS_TOKEN':'test-only','INSTAGRAM_USER_ID':'123','PUBLIC_MEDIA_BASE_URL':'https://example.com/media'}.items():monkeypatch.setenv(k,v)
+
+@pytest.mark.parametrize('problem',['missing','low_sync','critical','changed_image','changed_text','bad_schema'])
+def test_quality_gate_blocks_schedule_and_direct_publish(client,monkeypatch,problem):
+    configure_instagram(monkeypatch);p=generate(client)
+    p.update(facts_checked=True,rights_checked=True);approve_quality(p)
+    if problem=='missing':p.pop('quality')
+    elif problem=='low_sync':p['quality']['cards'][0]['sync']=29
+    elif problem=='critical':p['quality']['cards'][0]['critical']=True
+    elif problem=='changed_image':(st.MEDIA/p['id']/'01.jpg').write_bytes(b'changed')
+    elif problem=='changed_text':p['slides'][0]['title']='평가 후 달라진 제목'
+    elif problem=='bad_schema':p['quality']['cards'][0]['sync']=100
+    st.save(p)
+    at=(datetime.now(st.KST)+timedelta(hours=1)).isoformat()
+    r=client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at})
+    assert r.status_code==400 and '자가평가' in r.json()['detail']
+    async def forbidden(*args,**kwargs):pytest.fail('Blocked review must not call Meta')
+    monkeypatch.setattr(publishing,'api',forbidden)
+    with pytest.raises(providers.ProviderError):asyncio.run(publishing.publish(p))
+
+def test_review_failure_invalidates_previous_pass(client):
+    p=generate(client);approve_quality(p)
+    assert client.post(f'/api/posts/{p["id"]}/evaluate').status_code==400
+    assert st.get(p['id'])['quality']['status']=='error'
+
+def test_edit_invalidates_review_but_checkbox_save_preserves_it(client):
+    p=generate(client);approve_quality(p)
+    body={'slides':p['slides'],'caption':p['caption'],'source_name':p['source_name'],'source_url':p['source_url'],'facts_checked':True,'rights_checked':True}
+    r=client.put('/api/posts/'+p['id'],json=body)
+    assert r.status_code==200 and r.json()['quality']['status']=='passed'
+    body['slides'][0]['title']='수정한 제목'
+    r=client.put('/api/posts/'+p['id'],json=body)
+    assert r.json()['quality']['status']=='stale'
+
+def test_review_uses_actual_images_and_rejects_incomplete_response(client,monkeypatch):
+    import json
+    p=generate(client);approve_quality(p)
+    monkeypatch.setenv('OPENAI_API_KEY','test-only')
+    cards=p['quality']['cards']
+    async def fake_api(*args,**kwargs):
+        content=kwargs['json']['input'][0]['content']
+        images=[c for c in content if c['type']=='input_image']
+        assert len(images)==len(p['slides'])
+        assert all(c['image_url'].startswith('data:image/jpeg;base64,') for c in images)
+        return {'output':[{'content':[{'type':'output_text','text':json.dumps({'cards':cards})}]}]}
+    monkeypatch.setattr(providers,'api',fake_api)
+    assert asyncio.run(REAL_EVALUATE(p))['status']=='passed'
+    cards.pop()
+    with pytest.raises(providers.ProviderError):asyncio.run(REAL_EVALUATE(p))
 
 def test_schedule_checks_cancel_and_edit_lock(client,monkeypatch):
     p=generate(client);at=(datetime.now(st.KST)+timedelta(hours=1)).isoformat()
     assert client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at}).status_code==400
     configure_instagram(monkeypatch)
     assert client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at}).status_code==400
-    p.update(facts_checked=True,rights_checked=True);st.save(p)
+    p.update(facts_checked=True,rights_checked=True);approve_quality(p)
     assert client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at}).status_code==200
     edit={'slides':p['slides'],'caption':p['caption'],'source_name':'x','source_url':''}
     assert client.put('/api/posts/'+p['id'],json=edit).status_code==409
@@ -140,14 +197,14 @@ def test_daily_cap(client,monkeypatch):
     configure_instagram(monkeypatch);p=generate(client)
     at=(datetime.now(st.KST)+timedelta(hours=1)).isoformat()
     for n in range(10):st.save({**p,'id':f'cap-{n}','status':'scheduled','scheduled_at':at})
-    p.update(facts_checked=True,rights_checked=True);st.save(p)
+    p.update(facts_checked=True,rights_checked=True);approve_quality(p)
     r=client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at})
     assert r.status_code==400 and '10개' in r.json()['detail']
 
 @pytest.mark.parametrize('fail',[False,True])
 def test_publish_result_uncertainty(client,monkeypatch,fail):
     configure_instagram(monkeypatch);p=generate(client,count=2)
-    p.update(facts_checked=True,rights_checked=True,status='scheduled');st.save(p)
+    p.update(facts_checked=True,rights_checked=True,status='scheduled');approve_quality(p)
     calls=[]
     async def fake(method,url,**kwargs):
         calls.append(url)

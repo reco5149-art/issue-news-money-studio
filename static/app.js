@@ -165,7 +165,7 @@ function showPreview() {
   $("preview-pager").hidden = false;
   $("result-actions").hidden = false;
   $("slide-position").textContent = `${state.slide + 1} / ${p.slides.length}`;
-  $("engine-note").textContent = p.engine_note;
+  $("engine-note").textContent = p.engine_note + " · " + ({passed:"자가평가 통과",blocked:"자가평가 미달: 문안 편집에서 확인",stale:"재평가 필요",error:"평가 실패: 재평가 필요"}[p.quality?.status] || "자가평가 필요");
   $("download-btn").href = `/api/posts/${p.id}/download`;
 }
 $("prev-slide").onclick = () => {
@@ -363,7 +363,9 @@ function renderLibrary() {
   );
 }
 $("library-filter").onchange = renderLibrary;
+let editorDirty = false;
 function openEditor() {
+  editorDirty = false;
   const p = state.current;
   if (!p) return;
   const writable = ["draft", "failed"].includes(p.status);
@@ -396,7 +398,8 @@ function openEditor() {
   $("facts-check").checked = p.facts_checked;
   $("rights-check").checked = p.rights_checked;
   $("save-edit").disabled = !writable;
-  $("schedule-post").disabled = !writable;
+  renderQuality(p);
+  $("evaluate-post").disabled = !writable;
   $("schedule-at").value = "";
   $("editor").showModal();
 }
@@ -423,8 +426,33 @@ $("save-edit").onclick = () =>
     });
     showPreview();
     await refresh();
-    toast("편집 내용과 확인 결과를 저장했습니다.");
+    editorDirty = false;
+    renderQuality(state.current);
+    $("evaluate-post").disabled = false;
+    toast("편집 내용과 확인 결과를 저장했습니다. 평가 상태를 확인하세요.");
   });
+function renderQuality(p) {
+  const q = p.quality || {};
+  const labels = {passed:"통과",blocked:"게시 보류",stale:"수정 후 재평가 필요",error:"평가 실패"};
+  $("quality-result").innerHTML = `<p><b>${esc(labels[q.status] || "평가 필요")}</b> ${esc(q.message || "")}</p>` + (q.cards || []).map(c => `<p><b>${c.card}번 · ${c.hook+c.sync+c.grounding+c.cta}/100점${c.critical ? " · 중대 오류" : ""}</b><br>후킹 ${c.hook}/25 · 사진 일치 ${c.sync}/40 · 원고 근거 ${c.grounding}/25 · CTA ${c.cta}/10<br>${esc(c.reason)}<br>수정 제안: ${esc(c.fix)}</p>`).join("");
+  $("schedule-post").disabled = !["draft","failed"].includes(p.status) || q.status !== "passed" || editorDirty;
+}
+$("editor").addEventListener("input", e => {
+  if (e.target.id !== "schedule-at") {
+    editorDirty = true;
+    $("schedule-post").disabled = true;
+    $("evaluate-post").disabled = true;
+    $("quality-result").textContent = "변경 내용을 저장한 후 평가 상태를 확인하세요.";
+  }
+});
+$("evaluate-post").onclick = () => busy($("evaluate-post"), async () => {
+  if (editorDirty) throw Error("변경 내용을 먼저 저장하세요.");
+  state.current.quality = {status:"error", message:"평가 중입니다. 실패하면 다시 시도하세요."};
+  renderQuality(state.current);
+  state.current = await api(`/api/posts/${state.current.id}/evaluate`, {method:"POST"});
+  renderQuality(state.current); showPreview(); await refresh();
+  toast(state.current.quality.status === "passed" ? "평가를 통과했습니다. 사실·권한 확인 후 예약하세요." : "게시를 보류했습니다. 수정 제안을 확인하세요.");
+});
 $("schedule-post").onclick = () =>
   busy($("schedule-post"), async () => {
     if (!$("schedule-at").value)

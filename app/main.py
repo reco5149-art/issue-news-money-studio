@@ -21,6 +21,7 @@ from .render import render
 from .publishing import publish
 from .models import VideoFrames
 from .video_frames import youtube_frames
+from . import quality
 
 load_dotenv(st.ROOT/'.env')
 st.init()
@@ -83,7 +84,13 @@ async def create(req):
     post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
     post['images']=await asyncio.to_thread(render,post)
     st.save(post);st.log('카드 생성: '+post['slides'][0]['title'])
-    return post
+    digest=quality.fingerprint(post)
+    try:result=await quality.evaluate(post)
+    except (ValueError,OSError):result={'status':'error','message':'자동 평가를 완료하지 못했습니다. 초안은 저장했으며, 재평가 전 게시가 제한됩니다.'}
+    async with LOCK:
+        current=st.get(post['id'])
+        if quality.fingerprint(current)==digest:current['quality']=result;st.save(current)
+    return current
 
 async def daily_run():
     if DAILY_LOCK.locked():raise p.ProviderError('일일 생성 작업이 진행 중입니다.')
@@ -213,8 +220,29 @@ async def edit(pid:str,req:Edit):
             post['caption']=post['caption'][:max(0,2200-len(suffix))]+suffix
         if any((s.get('asset_id') or post.get('asset_id')) != ((old_slides[i].get('asset_id') or post.get('asset_id')) if i<len(old_slides) else None) for i,s in enumerate(updated)):
             post['rights_checked']=False
-        post['images']=await asyncio.to_thread(render,post);st.save(post)
+        post['images']=await asyncio.to_thread(render,post)
+        if (post.get('quality') or {}).get('fingerprint')!=quality.fingerprint(post):
+            post['quality']={'status':'stale','message':'내용 또는 사진이 변경되었습니다. 다시 평가하세요.'}
+        st.save(post)
         return post
+
+@app.post('/api/posts/{pid}/evaluate')
+async def evaluate_post(pid:str):
+    post=lookup(pid);writable(post)
+    digest=quality.fingerprint(post)
+    try:result=await quality.evaluate(post)
+    except (ValueError,OSError):
+        async with LOCK:
+            current=lookup(pid)
+            if quality.fingerprint(current)==digest:
+                current['quality']={'status':'error','message':'평가 실패. 다시 평가하기 전에는 게시할 수 없습니다.'};st.save(current)
+        raise p.ProviderError('평가를 완료하지 못했습니다. 연결 상태를 확인하고 다시 평가하세요.')
+    async with LOCK:
+        current=lookup(pid);writable(current)
+        if quality.fingerprint(current)!=result['fingerprint']:
+            raise HTTPException(409,'평가 중 내용이 바뀌었습니다. 다시 평가하세요.')
+        current['quality']=result;st.save(current)
+        return current
 
 @app.post('/api/posts/{pid}/schedule')
 async def schedule(pid:str,req:Schedule):
@@ -222,6 +250,7 @@ async def schedule(pid:str,req:Schedule):
         post=lookup(pid);writable(post)
         p.require('INSTAGRAM_ACCESS_TOKEN','INSTAGRAM_USER_ID','PUBLIC_MEDIA_BASE_URL')
         if not post.get('facts_checked') or not post.get('rights_checked'):raise p.ProviderError('사실관계·이미지 사용 권한을 확인하고 저장하세요.')
+        quality.ensure_passed(post)
         if post['ratio']=='9:16':raise p.ProviderError('피드 예약은 4:5 또는 1:1만 지원합니다.')
         at=datetime.fromisoformat(req.at)
         if at.tzinfo is None:at=at.replace(tzinfo=st.KST)

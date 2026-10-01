@@ -3,11 +3,13 @@ import os
 from datetime import datetime
 from . import storage as st
 from .providers import api, require, ProviderError, public_url
+from .quality import ensure_passed
 
 async def publish(post):
     require('INSTAGRAM_ACCESS_TOKEN','INSTAGRAM_USER_ID','PUBLIC_MEDIA_BASE_URL')
     if post['ratio']=='9:16':raise ProviderError('9:16은 다운로드용입니다. 피드 자동 게시에는 4:5 또는 1:1을 사용하세요.')
     if not post.get('facts_checked') or not post.get('rights_checked'):raise ProviderError('사실관계·이미지 권한 확인 후 예약하세요.')
+    ensure_passed(post)
     base=os.environ['PUBLIC_MEDIA_BASE_URL'].rstrip('/')
     if not base.startswith('https://'):raise ProviderError('공개 이미지 주소는 HTTPS여야 합니다.')
     public_url(base)
