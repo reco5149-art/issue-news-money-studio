@@ -32,6 +32,9 @@ def fit(draw, text, xy, width, height, size, color, bold=False):
     for i,line in enumerate(lines): draw.text((xy[0],xy[1]+i*step),line,font=f,fill=color)
 
 def render(post):
+    if post.get('design_version') == 2:
+        from .editorial_render import render_editorial
+        return render_editorial(post, MEDIA, ASSETS, SIZES, COLORS, font, fit)
     out=MEDIA/post['id']; out.mkdir(exist_ok=True)
     w,h=SIZES[post['ratio']]; accent=COLORS[post['category']]
     paths=[]

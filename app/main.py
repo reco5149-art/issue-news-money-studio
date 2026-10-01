@@ -80,8 +80,13 @@ async def create(req):
             prompt=(f'Card {i+1} of {len(slides)}. Create a distinct scene for THIS card. '
                     f'Overall topic: {slides[0]["title"]}\n'
                     f'This card title: {slide["title"]}\nThis card content: {slide["body"]}\n'
-                    'Use one concrete visual metaphor matching this content, consistent editorial photography style. '
-                    'Vary scene and composition across cards. No lettering, logos or fabricated news photographs.')
+                    'Premium editorial still life: a single meaningful object or environment directly tied to this card. '
+                  'Natural directional light, tactile materials, restrained palette, uncluttered background. '
+                  'No generic handshake, pointing person, random face, cartoon, collage or stock-photo grin. '
+                  'Never reconstruct real named people, medals, tears, protests or unverified events. '
+                  'For real people and news incidents, illustrate relevant objects or locations as a clearly conceptual image. '
+                  'Keep the complete subject within the central 65 percent, with generous crop-safe margins. '
+                  'Vary scene and composition across cards. No lettering, logos or fabricated news photographs.')
             asset=asset_save(await p.ai_image(prompt),'AI 생성 이미지')
             slide['asset_id']=asset['asset_id'];slide['image_credit']='AI 생성 이미지'
     credit=''
@@ -90,7 +95,7 @@ async def create(req):
     if req.image_mode=='video' and req.video_asset_ids:credit='영상 구간별 자동 캡처 — 장면별 출처는 편집 정보에 기록. 이용 권한 확인 필요'
     caption=content['caption']
     if credit:caption=caption[:max(0,2193-len(credit))]+'\n이미지: '+credit
-    post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
+    post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'design_version':2,'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
     if auto_video:post['generation_note']=f'원고와 사용 가능한 사진에 맞춰 {len(slides)}장으로 자동 구성했습니다.'
     post['images']=await asyncio.to_thread(render,post)
     st.save(post);st.log('카드 생성: '+post['slides'][0]['title'])
