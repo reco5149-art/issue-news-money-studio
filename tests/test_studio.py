@@ -142,7 +142,7 @@ def test_quality_gate_blocks_schedule_and_direct_publish(client,monkeypatch,prob
     configure_instagram(monkeypatch);p=generate(client)
     p.update(facts_checked=True,rights_checked=True);approve_quality(p)
     if problem=='missing':p.pop('quality')
-    elif problem=='low_sync':p['quality']['cards'][0]['sync']=29
+    elif problem=='low_sync':p['quality']['cards'][0]['sync']=24
     elif problem=='critical':p['quality']['cards'][0]['critical']=True
     elif problem=='changed_image':(st.MEDIA/p['id']/'01.jpg').write_bytes(b'changed')
     elif problem=='changed_text':p['slides'][0]['title']='평가 후 달라진 제목'

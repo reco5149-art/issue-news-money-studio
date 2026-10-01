@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field, ConfigDict
 from . import storage as st, providers as p
 
 VERSION='card-review-v2'
+MIN_TOTAL=75
+MIN_SYNC=25
+MIN_GROUNDING=20
 
 class CardScore(BaseModel):
     model_config=ConfigDict(extra='forbid',strict=True)
@@ -31,7 +34,7 @@ def fingerprint(post):
     return h.hexdigest()
 
 def passed(card):
-    return not card.critical and card.sync>=30 and card.grounding>=20 and card.hook+card.sync+card.grounding+card.cta>=80
+    return not card.critical and card.sync>=MIN_SYNC and card.grounding>=MIN_GROUNDING and card.hook+card.sync+card.grounding+card.cta>=MIN_TOTAL
 
 def ensure_passed(post):
     q=post.get('quality') or {}
@@ -60,7 +63,7 @@ async def evaluate(post):
         'hook 0~25: 구체성, 독자 관련성, 표지와 본문 약속 일치. 중간 장은 구체적 제목을 평가. '
         'sync 0~40: 사진의 눈에 보이는 인물 행동·사물·상황이 문구와 일치하는가. '
         '같은 사람이나 비슷한 주제인 것만으로 구체적인 행동·감정을 뒷받침하지 못한다. '
-        '읽을 수 없거나 사진과 주장 연결을 판단할 수 없으면 sync 29 이하. '
+        '읽을 수 없거나 사진과 주장 연결을 판단할 수 없으면 sync 24 이하. '
         '사건과 무관한 구독·채널 홍보·엔딩 화면은 critical=true, sync 10 이하. '
         '불필요한 방송 로고·구독 문구·방송 자막이 남아 주제 집중을 방해하면 sync 29 이하로 하고 크롭이나 다른 장면을 제안한다. '
         '글자만 있는 자체 디자인은 사진 부재 자체로 감점하지 말고 시각적 가독성과 문안 일치를 평가한다. '
