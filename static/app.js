@@ -662,4 +662,5 @@ function renderSettings() {
     )
     .join("");
 }
+$("image-mode").onchange();
 refresh().catch((e) => toast(e.message, true));
