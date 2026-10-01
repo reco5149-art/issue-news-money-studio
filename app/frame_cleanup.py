@@ -66,6 +66,8 @@ async def clean_frames(frames,count):
         return (at,cleaned) if cleaned else None
     results=await asyncio.gather(*(inspect(item) for item in frames))
     usable=[item for item in results if item is not None]
+    if count==0:
+        return usable[:10]
     if len(usable)<count:
         raise p.ProviderError(f'로고·홍보 화면을 제외하고 사용 가능한 장면이 {len(usable)}개입니다. 카드 장수를 줄이거나 다른 영상을 선택하세요.')
     return [usable[min(len(usable)-1,int((i+.5)*len(usable)/count))] for i in range(count)]

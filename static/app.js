@@ -187,9 +187,11 @@ $("generate-btn").onclick = () =>
     const text = $("source-text").value.trim();
     if (text.length < 5) throw Error("주제나 원고를 5자 이상 입력하세요.");
     let videoAssets = [];
+    let imageMode = $("image-mode").value;
     if ($("image-mode").value === "video") {
       toast("영상에서 카드별 장면을 자동 캡처하고 있습니다.");
-      videoAssets = await captureVideoFrames(Number($("count").value) || 10);
+      videoAssets = await captureVideoFrames(Number($("count").value));
+      if (!videoAssets.length && Number($("count").value) === 0) imageMode = "design";
     }
     const body = {
       video_asset_ids: videoAssets,
@@ -199,7 +201,7 @@ $("generate-btn").onclick = () =>
       ratio: state.ratio,
       count: Number($("count").value),
       engine: $("engine").value,
-      image_mode: $("image-mode").value,
+      image_mode: imageMode,
       asset_id: state.asset?.asset_id || "",
       source_name: $("source-name").value || "직접 입력",
       source_url: $("source-url").value,
@@ -212,7 +214,9 @@ $("generate-btn").onclick = () =>
     state.slide = 0;
     showPreview();
     await refresh();
-    toast("카드뉴스를 만들었습니다. 문안을 확인하고 파일로 저장하세요.");
+    toast(imageMode === "design" && $("image-mode").value === "video"
+      ? "적합한 영상 사진이 없어 텍스트 카드로 자동 구성했습니다. 문안을 확인하세요."
+      : (state.current.generation_note || "카드뉴스를 만들었습니다. 문안을 확인하고 파일로 저장하세요."));
   });
 function setAsset(a) {
   state.asset = a;
@@ -246,7 +250,7 @@ async function captureVideoFrames(count) {
   const scale = Math.min(1, 1280 / v.videoWidth);
   canvas.width = Math.round(v.videoWidth * scale); canvas.height = Math.round(v.videoHeight * scale);
   const assets = [];
-  const candidates = Math.min(20, count * 3);
+  const candidates = count === 0 ? 20 : Math.min(20, count * 3);
   for (let i=0; i<candidates; i++) {
     const at = v.duration * (i + .5) / candidates;
     if (Math.abs(v.currentTime - at) > .001) await waitVideo(v, "seeked", () => { v.currentTime = at; });

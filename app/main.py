@@ -59,7 +59,15 @@ async def create(req):
     elif req.image_mode in ('upload','web','video'):
         if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():raise p.ProviderError('사용할 사진 또는 영상 캡처를 먼저 선택하세요.')
     if req.image_mode in ('design','ai'):req.asset_id=''
-    content=await p.ai_copy(req) if req.engine=='ai' else p.local_copy(req)
+    copy_req=req
+    auto_video=req.count==0 and req.image_mode=='video' and bool(req.video_asset_ids)
+    if auto_video and len(req.video_asset_ids)==1:
+        copy_req=req.model_copy(update={'count':1})
+    content=await p.ai_copy(copy_req) if req.engine=='ai' else p.local_copy(copy_req)
+    if auto_video and len(content['slides'])>len(req.video_asset_ids):
+        # Recompose from the original source; never drop trailing facts or CTA.
+        copy_req=req.model_copy(update={'count':len(req.video_asset_ids)})
+        content=await p.ai_copy(copy_req) if req.engine=='ai' else p.local_copy(copy_req)
     slides=[Slide(**s).model_dump() for s in content['slides']]
     if req.image_mode=='video' and req.video_asset_ids:
         if len(req.video_asset_ids)<len(slides):raise p.ProviderError('카드 장수만큼 장면을 다시 캡처하세요.')
@@ -83,6 +91,7 @@ async def create(req):
     caption=content['caption']
     if credit:caption=caption[:max(0,2193-len(credit))]+'\n이미지: '+credit
     post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
+    if auto_video:post['generation_note']=f'원고와 사용 가능한 사진에 맞춰 {len(slides)}장으로 자동 구성했습니다.'
     post['images']=await asyncio.to_thread(render,post)
     st.save(post);st.log('카드 생성: '+post['slides'][0]['title'])
     digest=quality.fingerprint(post)
@@ -299,7 +308,7 @@ async def video_frames(req:VideoFrames):
     p.require('OPENAI_API_KEY')
     if VIDEO_LOCK.locked():raise HTTPException(409,'영상 캡처가 진행 중입니다. 완료 후 다시 시도하세요.')
     async with VIDEO_LOCK:
-        frames=await asyncio.to_thread(youtube_frames,req.url,min(20,req.count*3),st.DATA)
+        frames=await asyncio.to_thread(youtube_frames,req.url,20 if req.count==0 else min(20,req.count*3),st.DATA)
         frames=await clean_frames(frames,req.count)
         assets=[{**asset_save(data,f'영상 캡처 {at:.1f}초 / 방송 그래픽 크롭 / {req.url} / 이용 권한 확인 필요'),'at':at} for at,data in frames]
         return {'assets':assets,'note':'영상 구간을 나눠 자동 캡처했습니다. 문장 의미 분석이나 자막 추출은 아니므로 장면과 문안의 관계를 검토하세요.'}

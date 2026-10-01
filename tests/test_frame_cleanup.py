@@ -49,3 +49,11 @@ def test_invalid_inspection_fails_closed(monkeypatch):
     async def fake(*args,**kwargs):return {'output':[]}
     monkeypatch.setattr(providers,'api',fake)
     with pytest.raises(providers.ProviderError):asyncio.run(cleanup.inspect_frame(jpeg()))
+
+
+def test_auto_accepts_one_or_zero_frames(monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY','test-only')
+    async def fake(raw):return raw if raw==b'good' else None
+    monkeypatch.setattr(cleanup,'inspect_frame',fake)
+    assert asyncio.run(cleanup.clean_frames([(1,b'bad'),(2,b'good')],0))==[(2,b'good')]
+    assert asyncio.run(cleanup.clean_frames([(1,b'bad')],0))==[]

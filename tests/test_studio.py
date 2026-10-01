@@ -248,3 +248,32 @@ def test_uploaded_frames_cleaned_to_new_assets(client,monkeypatch):
     assert response.json()['assets'][0]['asset_id']!=original['asset_id']
     assert (st.ASSETS/(original['asset_id']+'.jpg')).exists()
     assert client.post('/api/video/clean-frames',json={'asset_ids':['../../bad'],'count':1}).status_code==400
+
+
+@pytest.mark.parametrize('available,expected_calls',[(1,[1]),(2,[0,2])])
+def test_auto_video_recomposes_for_available_photos(client,monkeypatch,available,expected_calls):
+    b=io.BytesIO();Image.new('RGB',(640,480),'blue').save(b,format='JPEG')
+    ids=[main.asset_save(b.getvalue(),'video')['asset_id'] for _ in range(available)]
+    calls=[]
+    async def copy(req):
+        calls.append(req.count)
+        n=req.count or 4
+        return {'slides':[{'title':f'카드 {i+1}','body':'재구성한 내용과 CTA'} for i in range(n)],'caption':'출처와 캡션'}
+    monkeypatch.setattr(providers,'ai_copy',copy)
+    post=generate(client,engine='ai',count=0,image_mode='video',video_asset_ids=ids)
+    assert len(post['slides'])==available and calls==expected_calls
+    assert post['count']==0 and len({x['asset_id'] for x in post['slides']})==available
+
+
+def test_auto_frame_endpoint_preserves_zero(client,monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY','test-only')
+    counts=[]
+    def capture(url,count,data):
+        counts.append(count);return [(1,b'raw')]
+    async def clean(frames,count):
+        assert count==0
+        return []
+    monkeypatch.setattr(main,'youtube_frames',capture)
+    monkeypatch.setattr(main,'clean_frames',clean)
+    r=client.post('/api/video/frames',json={'url':'https://youtu.be/NHXFgBSAwS8','count':0})
+    assert r.status_code==200 and r.json()['assets']==[] and counts==[20]
