@@ -4,7 +4,9 @@ $studioData = Join-Path $studioRoot 'data'
 $studioPause = Join-Path $studioData 'server.paused'
 $studioLog = Join-Path $studioData 'watchdog.log'
 $studioMutex = New-Object Threading.Mutex($false, 'Local\IssueStudioServerWatchdog')
-if (-not $studioMutex.WaitOne(0)) { exit 0 }
+try { $studioOwnsMutex = $studioMutex.WaitOne(0) }
+catch [Threading.AbandonedMutexException] { $studioOwnsMutex = $true }
+if (-not $studioOwnsMutex) { exit 0 }
 try {
     while ($true) {
         if (-not (Test-Path -LiteralPath $studioPause)) {
