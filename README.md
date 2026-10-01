@@ -1,5 +1,9 @@
 # Issue Studio — 이슈뉴스머니 카드뉴스 제작실
 
+**[웹 체험판 열기](https://reco5149-art.github.io/issue-news-money-studio/)** — PC 서버 없이 원고 배치·카드 편집·PNG/캡션 다운로드를 체험할 수 있습니다. AI 생성·뉴스 검색·인스타그램 게시 기능은 체험판에 포함하지 않습니다.
+
+로컬 자동 복구 설치: PowerShell에서 `./scripts/install-server-watchdog.ps1`. 로그인 후 서버가 자동 실행되며, 서버 리스너가 없으면 30초 간격으로 복구합니다. 자세한 범위는 [운영 안내](DevelopDoc/AVAILABILITY.md)를 참고하세요.
+
 `@issue_news_money`를 위한 **소재 탐색 → 카드 제작 → 검토 → 예약 발행** 프로그램입니다.
 한국어 원고로 1~10장 카드뉴스를 만들고 PNG 이미지, 캡션, 편집 정보를 ZIP으로 저장합니다.
 

@@ -19,11 +19,16 @@ from .models import Generate, Edit, Slide, Schedule, DailySchedule, UrlInput, As
 from . import providers as p
 from .render import render
 from .publishing import publish
+from .models import VideoFrames, FrameCleanup
+from .video_frames import youtube_frames
+from . import quality
+from .frame_cleanup import clean_frames
 
 load_dotenv(st.ROOT/'.env')
 st.init()
 LOCK=asyncio.Lock()
 DAILY_LOCK=asyncio.Lock()
+VIDEO_LOCK=asyncio.Lock()
 
 def lookup(pid):
     obj=st.get(pid)
@@ -31,6 +36,7 @@ def lookup(pid):
     return obj
 
 def writable(post):
+    if post.get("trashed_at"):raise HTTPException(409,"휴지통에서 복원한 후 수정·예약하세요.")
     if post['status'] in ('scheduled','publishing','published','needs_check'):
         raise HTTPException(409,'예약을 취소한 뒤 수정하세요. 게시 중·완료·확인 필요 콘텐츠는 수정할 수 없습니다.')
 
@@ -46,21 +52,73 @@ def asset_save(data,credit):
     return {'asset_id':aid,'url':'/assets/'+aid+'.jpg','credit':credit}
 
 async def create(req):
-    if req.image_mode in ('upload','web','video'):
-        if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():raise p.ProviderError('사용할 사진 또는 영상 캡처를 먼저 선택하세요.')
-    if req.image_mode=='ai':
-        asset=asset_save(await p.ai_image(req.text),'AI 생성 이미지');req.asset_id=asset['asset_id']
-    if req.image_mode=='design':req.asset_id=''
-    content=await p.ai_copy(req) if req.engine=='ai' else p.local_copy(req)
+    if req.image_mode=='video' and req.video_asset_ids:
+        for aid in req.video_asset_ids:
+            if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
+                raise p.ProviderError('영상 장면을 다시 캡처하세요.')
+        req.asset_id=''
+    elif req.image_mode in ('upload','video') or (req.image_mode=='web' and req.asset_id):
+        if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():
+            messages={'web':'웹 검색 결과에서 사용할 사진의 선택 버튼을 누른 후 생성하세요.',
+                      'upload':'사용할 사진 파일을 업로드한 후 생성하세요.',
+                      'video':'사용할 영상 장면을 먼저 캡처하세요.'}
+            raise p.ProviderError(messages[req.image_mode])
+    if req.image_mode in ('design','ai'):req.asset_id=''
+    copy_req=req
+    auto_video=req.count==0 and req.image_mode=='video' and bool(req.video_asset_ids)
+    if auto_video and len(req.video_asset_ids)==1:
+        copy_req=req.model_copy(update={'count':1})
+    content=await p.ai_copy(copy_req) if req.engine=='ai' else p.local_copy(copy_req)
+    if auto_video and len(content['slides'])>len(req.video_asset_ids):
+        # Recompose from the original source; never drop trailing facts or CTA.
+        copy_req=req.model_copy(update={'count':len(req.video_asset_ids)})
+        content=await p.ai_copy(copy_req) if req.engine=='ai' else p.local_copy(copy_req)
     slides=[Slide(**s).model_dump() for s in content['slides']]
+    if req.image_mode=='video' and req.video_asset_ids:
+        if len(req.video_asset_ids)<len(slides):raise p.ProviderError('카드 장수만큼 장면을 다시 캡처하세요.')
+        for i,slide in enumerate(slides):
+            aid=req.video_asset_ids[min(len(req.video_asset_ids)-1,int((i+.5)*len(req.video_asset_ids)/len(slides)))]
+            slide['asset_id']=aid
+            slide['image_credit']=json.loads((st.ASSETS/(aid+'.json')).read_text(encoding='utf-8'))['credit']
+    web_credits=[];web_notes=[]
+    if req.image_mode=='web' and not req.asset_id:
+        from .web_art import attach
+        web_credits,web_notes=await attach(slides,asset_save)
+    if req.image_mode=='ai':
+        for i,slide in enumerate(slides):
+            prompt=(f'Card {i+1} of {len(slides)}. Create a distinct scene for THIS card. '
+                    f'Visual scene only: {content["slides"][i].get("visual_brief") or (slide["title"] + ": " + slide["body"] + ". Interpret the topic visually; never draw these words.")}\n'
+                    'Premium editorial still life: a single meaningful object or environment directly tied to this card. '
+                  'Natural directional light, tactile materials, restrained palette, uncluttered background. '
+                  'No generic handshake, pointing person, random face, cartoon, collage or stock-photo grin. '
+                  'Never reconstruct real named people, medals, tears, protests or unverified events. '
+                  'For real people and news incidents, illustrate relevant objects or locations as a clearly conceptual image. '
+                  'Keep the complete subject within the central 65 percent, with generous crop-safe margins. '
+                  'Vary scene and composition across cards. No lettering, logos or fabricated news photographs.')
+            asset=asset_save(await p.ai_image(prompt),'AI 생성 이미지')
+            slide['asset_id']=asset['asset_id'];slide['image_credit']='AI 생성 이미지'
     credit=''
     if req.asset_id:credit=json.loads((st.ASSETS/(req.asset_id+'.json')).read_text(encoding='utf-8'))['credit']
+    if req.image_mode=='ai':credit='AI 생성 이미지 (카드별 생성)'
+    if req.image_mode=='video' and req.video_asset_ids:credit='영상 구간별 자동 캡처 — 장면별 출처는 편집 정보에 기록. 이용 권한 확인 필요'
+    if req.image_mode=='web' and not req.asset_id:
+        credit='웹 검색 자료사진 · CC0/PDM · 상세 출처는 다운로드 content.json 참고' if web_credits else ''
     caption=content['caption']
     if credit:caption=caption[:max(0,2193-len(credit))]+'\n이미지: '+credit
-    post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
+    post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'design_version':2,'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
+    if req.image_mode=='web' and not req.asset_id:
+        post['web_image_credits']=web_credits
+        post['generation_note']=f'AI 웹 사진 자동 선택 {len(web_credits)}/{len(slides)}장. ' + ' / '.join(web_notes)
+    if auto_video:post['generation_note']=f'원고와 사용 가능한 사진에 맞춰 {len(slides)}장으로 자동 구성했습니다.'
     post['images']=await asyncio.to_thread(render,post)
     st.save(post);st.log('카드 생성: '+post['slides'][0]['title'])
-    return post
+    digest=quality.fingerprint(post)
+    try:result=await quality.evaluate(post)
+    except (ValueError,OSError):result={'status':'error','message':'자동 평가를 완료하지 못했습니다. 초안은 저장했으며, 재평가 전 게시가 제한됩니다.'}
+    async with LOCK:
+        current=st.get(post['id'])
+        if quality.fingerprint(current)==digest:current['quality']=result;st.save(current)
+    return current
 
 async def daily_run():
     if DAILY_LOCK.locked():raise p.ProviderError('일일 생성 작업이 진행 중입니다.')
@@ -157,6 +215,16 @@ def status():
     keys={'ai':bool(os.getenv('OPENAI_API_KEY')),'news':bool(os.getenv('NAVER_CLIENT_ID') and os.getenv('NAVER_CLIENT_SECRET')),'youtube':bool(os.getenv('YOUTUBE_API_KEY')),'instagram':all(os.getenv(n) for n in ['INSTAGRAM_ACCESS_TOKEN','INSTAGRAM_USER_ID','PUBLIC_MEDIA_BASE_URL'])}
     return {'connections':keys,'daily':st.setting('daily',st.DEFAULT_SCHEDULE),'time':st.now(),'note':'설정 존재 여부입니다. 실제 인증·게시 성공을 의미하지 않습니다.'}
 
+@app.post('/api/library/trash')
+async def trash_posts(ids:list[str]):
+    from .library import move
+    async with LOCK:return move(ids)
+
+@app.post('/api/library/restore')
+async def restore_posts(ids:list[str]):
+    from .library import move
+    async with LOCK:return move(ids,restore=True)
+
 @app.get('/api/posts')
 def list_posts():return st.posts()
 
@@ -170,8 +238,56 @@ async def generate(req:Generate):return await create(req)
 async def edit(pid:str,req:Edit):
     async with LOCK:
         post=lookup(pid);writable(post)
+        old_slides=post['slides']
+        updated=[]
+        for i,item in enumerate(req.slides):
+            slide=item.model_dump()
+            aid=item.asset_id or (old_slides[i].get('asset_id') if i<len(old_slides) else None) or post.get('asset_id')
+            if aid:
+                if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
+                    raise p.ProviderError('사용할 카드 사진을 다시 선택하세요.')
+                slide['asset_id']=aid
+                slide['image_credit']=json.loads((st.ASSETS/(aid+'.json')).read_text(encoding='utf-8'))['credit']
+            updated.append(slide)
         post.update(req.model_dump());post['slides']=[s.model_dump() for s in req.slides]
-        post['images']=await asyncio.to_thread(render,post);st.save(post)
+        post['slides']=updated
+        credits=list(dict.fromkeys(s.get('image_credit','') for s in updated if s.get('image_credit')))
+        post['image_credit']=' / '.join(credits)
+        if credits and post['image_credit'] not in post['caption']:
+            suffix='\n이미지: '+post['image_credit']
+            post['caption']=post['caption'][:max(0,2200-len(suffix))]+suffix
+        if any((s.get('asset_id') or post.get('asset_id')) != ((old_slides[i].get('asset_id') or post.get('asset_id')) if i<len(old_slides) else None) for i,s in enumerate(updated)):
+            post['rights_checked']=False
+        post['images']=await asyncio.to_thread(render,post)
+        if (post.get('quality') or {}).get('fingerprint')!=quality.fingerprint(post):
+            post['quality']={'status':'stale','message':'내용 또는 사진이 변경되었습니다. 다시 평가하세요.'}
+        st.save(post)
+        return post
+
+@app.post('/api/posts/{pid}/evaluate')
+async def evaluate_post(pid:str):
+    post=lookup(pid);writable(post)
+    digest=quality.fingerprint(post)
+    try:result=await quality.evaluate(post)
+    except (ValueError,OSError):
+        async with LOCK:
+            current=lookup(pid)
+            if quality.fingerprint(current)==digest:
+                current['quality']={'status':'error','message':'평가 실패. 다시 평가하기 전에는 게시할 수 없습니다.'};st.save(current)
+        raise p.ProviderError('평가를 완료하지 못했습니다. 연결 상태를 확인하고 다시 평가하세요.')
+    async with LOCK:
+        current=lookup(pid);writable(current)
+        if quality.fingerprint(current)!=result['fingerprint']:
+            raise HTTPException(409,'평가 중 내용이 바뀌었습니다. 다시 평가하세요.')
+        current['quality']=result;st.save(current)
+        return current
+
+@app.post('/api/posts/{pid}/approve')
+async def approve_post(pid:str):
+    async with LOCK:
+        post=lookup(pid);writable(post)
+        quality.approve_manual(post);st.save(post)
+        st.log('사용자 게시 승인: '+pid)
         return post
 
 @app.post('/api/posts/{pid}/schedule')
@@ -180,6 +296,7 @@ async def schedule(pid:str,req:Schedule):
         post=lookup(pid);writable(post)
         p.require('INSTAGRAM_ACCESS_TOKEN','INSTAGRAM_USER_ID','PUBLIC_MEDIA_BASE_URL')
         if not post.get('facts_checked') or not post.get('rights_checked'):raise p.ProviderError('사실관계·이미지 사용 권한을 확인하고 저장하세요.')
+        quality.ensure_passed(post)
         if post['ratio']=='9:16':raise p.ProviderError('피드 예약은 4:5 또는 1:1만 지원합니다.')
         at=datetime.fromisoformat(req.at)
         if at.tzinfo is None:at=at.replace(tzinfo=st.KST)
@@ -221,6 +338,28 @@ async def upload(file:UploadFile=File(...)):
     data=await file.read(15_000_001)
     if len(data)>15_000_000:raise HTTPException(413,'이미지는 15MB 이하만 지원합니다.')
     return asset_save(data,'직접 업로드 — 사용 권한 확인 필요')
+
+@app.post('/api/video/frames')
+async def video_frames(req:VideoFrames):
+    p.require('OPENAI_API_KEY')
+    if VIDEO_LOCK.locked():raise HTTPException(409,'영상 캡처가 진행 중입니다. 완료 후 다시 시도하세요.')
+    async with VIDEO_LOCK:
+        frames=await asyncio.to_thread(youtube_frames,req.url,20 if req.count==0 else min(20,req.count*3),st.DATA)
+        frames=await clean_frames(frames,req.count)
+        assets=[{**asset_save(data,f'영상 캡처 {at:.1f}초 / 방송 그래픽 크롭 / {req.url} / 이용 권한 확인 필요'),'at':at} for at,data in frames]
+        return {'assets':assets,'note':'영상 구간을 나눠 자동 캡처했습니다. 문장 의미 분석이나 자막 추출은 아니므로 장면과 문안의 관계를 검토하세요.'}
+
+@app.post('/api/video/clean-frames')
+async def clean_uploaded_frames(req:FrameCleanup):
+    if VIDEO_LOCK.locked():raise HTTPException(409,'영상 캡처가 진행 중입니다. 완료 후 다시 시도하세요.')
+    frames=[]
+    for i,aid in enumerate(req.asset_ids):
+        if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
+            raise p.ProviderError('영상 캡처를 다시 선택하세요.')
+        frames.append((i,(st.ASSETS/(aid+'.jpg')).read_bytes()))
+    async with VIDEO_LOCK:
+        cleaned=await clean_frames(frames,req.count)
+    return {'assets':[asset_save(data,'보유 영상 캡처 / 방송 그래픽 크롭 / 이용 권한 확인 필요') for _,data in cleaned]}
 
 @app.post('/api/assets/web')
 async def web_asset(req:AssetUrl):

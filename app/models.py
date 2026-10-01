@@ -9,14 +9,16 @@ class Generate(BaseModel):
     engine: Literal['local','ai'] = 'local'
     image_mode: Literal['design','upload','web','video','ai'] = 'design'
     asset_id: str = ''
+    video_asset_ids: list[str] = Field(default_factory=list,max_length=10)
     source_url: str = Field(default='', max_length=2000)
     source_name: str = Field(default='직접 입력', min_length=1, max_length=150)
-    tone: Literal['정보형','공감형','질문형'] = '질문형'
+    tone: Literal['후킹형','정보형','공감형','질문형'] = '후킹형'
     cta: str = Field(default='나중에 다시 볼 수 있도록 저장하세요. 여러분의 생각은 댓글로 알려주세요.', max_length=160)
 
 class Slide(BaseModel):
     title: str = Field(min_length=1, max_length=65)
     body: str = Field(default='', max_length=230)
+    asset_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{32}$')
 
 class Edit(BaseModel):
     slides: list[Slide] = Field(min_length=1, max_length=10)
@@ -37,6 +39,13 @@ class DailySchedule(BaseModel):
 
 class UrlInput(BaseModel):
     url: str = Field(max_length=2000)
+
+class VideoFrames(UrlInput):
+    count: int = Field(default=5,ge=0,le=10)
+
+class FrameCleanup(BaseModel):
+    asset_ids: list[str] = Field(min_length=1,max_length=20)
+    count: int = Field(ge=0,le=10)
 
 class AssetUrl(UrlInput):
     credit: str = Field(min_length=1, max_length=1000)
