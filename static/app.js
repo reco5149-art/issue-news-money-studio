@@ -82,7 +82,7 @@ async function refresh() {
     api("/api/posts"),
     api("/api/status"),
   ]);
-  $("nav-count").textContent = state.posts.length;
+  $("nav-count").textContent = state.posts.filter(p => !p.trashed_at).length;
   const today = state.status.time.slice(0, 10);
   const count = state.posts.filter(
     (p) => p.created_at.slice(0, 10) === today,
@@ -358,19 +358,52 @@ $("image-mode").onchange = () => {
     box.innerHTML +=
       '<p class="notice">API 사용료가 발생합니다. 문안을 만든 뒤 각 카드의 제목·본문에 맞는 설명용 이미지를 1장씩 생성합니다. 카드 5장이면 이미지 5장 비용과 대기 시간이 발생합니다. 실제 보도사진이 아닙니다.</p>';
 };
+const librarySelected = new Set();
+function updateLibrarySelection() {
+  const boxes = [...document.querySelectorAll("[data-select-post]")];
+  const selected = boxes.filter(b => librarySelected.has(b.dataset.selectPost));
+  $("library-selection-count").textContent = `${selected.length}개 선택`;
+  $("library-select-all").checked = boxes.length > 0 && selected.length === boxes.length;
+  $("library-select-all").indeterminate = selected.length > 0 && selected.length < boxes.length;
+  $("library-delete").disabled = $("library-restore").disabled = selected.length === 0;
+  $("library-delete").hidden = $("library-filter").value === "trash";
+  $("library-restore").hidden = $("library-filter").value !== "trash";
+}
+$("library-select-all").onchange = e => {
+  document.querySelectorAll("[data-select-post]").forEach(b => {
+    b.checked = e.target.checked;
+    if (b.checked) librarySelected.add(b.dataset.selectPost); else librarySelected.delete(b.dataset.selectPost);
+  });
+  updateLibrarySelection();
+};
+for (const action of ["delete", "restore"]) {
+  $("library-" + action).onclick = () => busy($("library-" + action), async () => {
+    const ids = [...document.querySelectorAll("[data-select-post]")].filter(b => b.checked).map(b => b.dataset.selectPost);
+    if (!ids.length) return;
+    await api("/api/library/" + (action === "delete" ? "trash" : "restore"), {method:"POST",body:JSON.stringify(ids)});
+    librarySelected.clear();
+    await refresh();
+    toast(`${ids.length}개를 ${action === "delete" ? "휴지통으로 이동했습니다. 예약은 취소됩니다." : "복원했습니다. 예약은 자동 복구되지 않습니다."}`);
+  }).finally(updateLibrarySelection);
+}
 function renderLibrary() {
   const filter = $("library-filter").value;
   const items = state.posts.filter(
-    (p) => filter === "all" || p.status === filter,
+    (p) => filter === "trash" ? !!p.trashed_at : !p.trashed_at && (filter === "all" || p.status === filter),
   );
   $("library-grid").innerHTML = items.length
     ? items
         .map(
           (p) =>
-            `<article class="content-card"><img loading="lazy" src="${esc(p.images[0])}" alt="${esc(p.slides[0].title)}"><p><span class="badge">${labels[p.status]}</span>${esc(p.category)} · ${p.ratio} · ${p.slides.length}장</p><h3>${esc(p.slides[0].title)}</h3><div class="input-row"><button class="secondary" data-open="${p.id}">검토 · 예약</button><a class="primary" href="/api/posts/${p.id}/download">다운로드</a></div>${p.error ? `<p>${esc(p.error)}</p>` : ""}</article>`,
+            `<article class="content-card">${["publishing","needs_check"].includes(p.status) ? '<p class="hint">게시 결과 확인 후 삭제할 수 있습니다.</p>' : `<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" style="width:auto" data-select-post="${p.id}" aria-label="${esc(p.slides[0].title)} 선택" ${librarySelected.has(p.id) ? "checked" : ""}>콘텐츠 선택</label>`}<img loading="lazy" src="${esc(p.images[0])}" alt="${esc(p.slides[0].title)}"><p><span class="badge">${labels[p.status]}</span>${esc(p.category)} · ${p.ratio} · ${p.slides.length}장</p><h3>${esc(p.slides[0].title)}</h3><div class="input-row">${p.trashed_at ? '<span class="hint">복원 후 편집할 수 있습니다.</span>' : `<button class="secondary" data-open="${p.id}">검토 · 예약</button>`}<a class="primary" href="/api/posts/${p.id}/download">다운로드</a></div>${p.error ? `<p>${esc(p.error)}</p>` : ""}</article>`,
         )
         .join("")
     : '<div class="empty">아직 만든 카드뉴스가 없습니다.<br>예시 원고로 첫 콘텐츠를 만들어보세요.</div>';
+  document.querySelectorAll("[data-select-post]").forEach(b => b.onchange = () => {
+    if (b.checked) librarySelected.add(b.dataset.selectPost); else librarySelected.delete(b.dataset.selectPost);
+    updateLibrarySelection();
+  });
+  updateLibrarySelection();
   document.querySelectorAll("[data-open]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -379,7 +412,7 @@ function renderLibrary() {
       }),
   );
 }
-$("library-filter").onchange = renderLibrary;
+$("library-filter").onchange = () => { librarySelected.clear(); renderLibrary(); };
 let editorDirty = false;
 function openEditor() {
   editorDirty = false;

@@ -36,6 +36,7 @@ def lookup(pid):
     return obj
 
 def writable(post):
+    if post.get("trashed_at"):raise HTTPException(409,"휴지통에서 복원한 후 수정·예약하세요.")
     if post['status'] in ('scheduled','publishing','published','needs_check'):
         raise HTTPException(409,'예약을 취소한 뒤 수정하세요. 게시 중·완료·확인 필요 콘텐츠는 수정할 수 없습니다.')
 
@@ -213,6 +214,16 @@ async def value_error(request,exc):return JSONResponse({'detail':str(exc)},statu
 def status():
     keys={'ai':bool(os.getenv('OPENAI_API_KEY')),'news':bool(os.getenv('NAVER_CLIENT_ID') and os.getenv('NAVER_CLIENT_SECRET')),'youtube':bool(os.getenv('YOUTUBE_API_KEY')),'instagram':all(os.getenv(n) for n in ['INSTAGRAM_ACCESS_TOKEN','INSTAGRAM_USER_ID','PUBLIC_MEDIA_BASE_URL'])}
     return {'connections':keys,'daily':st.setting('daily',st.DEFAULT_SCHEDULE),'time':st.now(),'note':'설정 존재 여부입니다. 실제 인증·게시 성공을 의미하지 않습니다.'}
+
+@app.post('/api/library/trash')
+async def trash_posts(ids:list[str]):
+    from .library import move
+    async with LOCK:return move(ids)
+
+@app.post('/api/library/restore')
+async def restore_posts(ids:list[str]):
+    from .library import move
+    async with LOCK:return move(ids,restore=True)
 
 @app.get('/api/posts')
 def list_posts():return st.posts()
