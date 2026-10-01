@@ -13,6 +13,8 @@ function Test-StudioHealth {
 }
 
 try {
+    $studioPause = Join-Path $studioData 'server.paused'
+    if (Test-Path -LiteralPath $studioPause) { Remove-Item -LiteralPath $studioPause }
     if (Test-StudioHealth) {
         Write-Host "Issue Studio is already running: $studioUrl"
         if (-not $NoBrowser) { Start-Process $studioUrl }
