@@ -152,8 +152,8 @@ async def ai_image(prompt):
     try:return base64.b64decode(data['data'][0]['b64_json'])
     except (KeyError,ValueError) as e:raise ProviderError('이미지 응답을 읽을 수 없습니다.') from e
 
-async def web_images(query):
-    data=await api('GET','https://api.openverse.org/v1/images/',params={'q':query,'page_size':12,'license':'cc0,pdm,by,by-sa'},headers={'User-Agent':'IssueStudio/1.0'})
+async def web_images(query,licenses="cc0,pdm,by,by-sa"):
+    data=await api('GET','https://api.openverse.org/v1/images/',params={'q':query,'page_size':12,'license':licenses},headers={'User-Agent':'IssueStudio/1.0'})
     items=[]
     for item in data.get('results',[]):
         if item.get('license') not in ('cc0','pdm','by','by-sa'):continue

@@ -188,6 +188,10 @@ $("generate-btn").onclick = () =>
     if (text.length < 5) throw Error("주제나 원고를 5자 이상 입력하세요.");
     let videoAssets = [];
     let imageMode = $("image-mode").value;
+    if (imageMode === "web" && !state.asset)
+      toast("AI가 카드별 검색어로 사진을 찾아 검토하고 있습니다. 잠시 기다려 주세요.");
+    if (imageMode === "upload" && !state.asset)
+      throw Error("사용할 사진 파일을 업로드한 후 생성하세요.");
     if ($("image-mode").value === "video") {
       toast("영상에서 카드별 장면을 자동 캡처하고 있습니다.");
       videoAssets = await captureVideoFrames(Number($("count").value));
@@ -222,6 +226,7 @@ function setAsset(a) {
   state.asset = a;
   $("asset-preview").src = a.url;
   $("asset-preview").hidden = false;
+  if ($("web-image-status")) $("web-image-status").textContent = "사진 선택 완료. 아래 미리보기 사진이 카드에 적용됩니다. 생성하기를 눌러 주세요.";
   toast("이미지를 선택했습니다. 생성 시 카드에 적용됩니다.");
 }
 function waitVideo(video, event, action) {
@@ -308,12 +313,18 @@ $("image-mode").onchange = () => {
   }
   if (mode === "web") {
     box.innerHTML =
-      '<label for="image-query">이미지 검색어 · 영문 검색 권장</label><div class="input-row"><input id="image-query" placeholder="artificial intelligence"><button id="search-images" class="secondary">검색</button></div><div id="image-results" class="image-results"></div>';
+      '<p class="hint" id="web-image-status" role="status">사진을 고르지 않고 생성하기를 누르면 AI가 카드별 웹 사진을 자동 검색·선택합니다. 적합한 사진이 없으면 자체 디자인으로 구성합니다. 직접 검색·선택도 가능합니다. 사진 검토에는 AI API 비용이 발생합니다.</p><label for="image-query">직접 사진 선택 (선택 사항) · 영문 검색 권장</label><div class="input-row"><input id="image-query" placeholder="artificial intelligence"><button id="search-images" class="secondary">검색</button></div><div id="image-results" class="image-results"></div>';
     $("search-images").onclick = () =>
       busy($("search-images"), async () => {
-        const list = await api(
-          "/api/images/search?q=" + encodeURIComponent($("image-query").value),
+        const query = $("image-query").value.trim();
+        if (!query) throw Error("이미지 검색어를 먼저 입력하세요. 예: skateboard, city, technology");
+        $("web-image-status").textContent = "사진을 검색하고 있습니다…";
+        let list;
+        try { list = await api(
+          "/api/images/search?q=" + encodeURIComponent(query),
         );
+        } catch (e) { $("web-image-status").textContent = "검색 실패: " + e.message; throw e; }
+        $("web-image-status").textContent = list.length ? "검색 완료. 사용할 사진 아래의 ‘선택’을 눌러 주세요." : "검색 결과가 없습니다. 다른 검색어로 시도해 주세요.";
         $("image-results").innerHTML = list.length
           ? list
               .map(
@@ -344,7 +355,7 @@ $("image-mode").onchange = () => {
       });
   }
   if (mode === "ai")
-    box.innerHTML =
+    box.innerHTML +=
       '<p class="notice">API 사용료가 발생합니다. 문안을 만든 뒤 각 카드의 제목·본문에 맞는 설명용 이미지를 1장씩 생성합니다. 카드 5장이면 이미지 5장 비용과 대기 시간이 발생합니다. 실제 보도사진이 아닙니다.</p>';
 };
 function renderLibrary() {
@@ -618,6 +629,12 @@ function renderSettings() {
       "AI 문안 · 이미지",
       "OPENAI_API_KEY",
       "원고 요약, 후킹 문구, 주제 설명용 이미지 생성",
+    ],
+    [
+      "kie",
+      "KIE AI 이미지",
+      "KIE_API_KEY (선택: KIE_IMAGE_MODEL / KIE_IMAGE_RESOLUTION)",
+      "카드별 AI 이미지 생성",
     ],
     [
       "news",

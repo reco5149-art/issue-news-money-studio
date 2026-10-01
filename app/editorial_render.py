@@ -30,6 +30,9 @@ def render_editorial(post, media, assets, sizes, colors, font, fit):
             if post.get('image_mode') == 'ai' or 'AI 생성' in credit:
                 d.rectangle((64, top+16, 357, top+56), fill='#101719')
                 d.text((77, top+19), 'AI 생성 · 설명용 이미지', font=font(21), fill='#ffffff')
+            elif slide.get('web_illustration'):
+                d.rectangle((64, top+16, 252, top+56), fill='#101719')
+                d.text((77, top+19), '설명용 자료사진', font=font(21), fill='#ffffff')
             y = bottom + 28
         else:
             y = int(h * .24)

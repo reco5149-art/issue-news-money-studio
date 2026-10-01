@@ -56,8 +56,12 @@ async def create(req):
             if not re.fullmatch('[a-f0-9]{32}',aid) or not (st.ASSETS/(aid+'.jpg')).is_file():
                 raise p.ProviderError('영상 장면을 다시 캡처하세요.')
         req.asset_id=''
-    elif req.image_mode in ('upload','web','video'):
-        if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():raise p.ProviderError('사용할 사진 또는 영상 캡처를 먼저 선택하세요.')
+    elif req.image_mode in ('upload','video') or (req.image_mode=='web' and req.asset_id):
+        if not re.fullmatch('[a-f0-9]{32}',req.asset_id) or not (st.ASSETS/(req.asset_id+'.jpg')).is_file():
+            messages={'web':'웹 검색 결과에서 사용할 사진의 선택 버튼을 누른 후 생성하세요.',
+                      'upload':'사용할 사진 파일을 업로드한 후 생성하세요.',
+                      'video':'사용할 영상 장면을 먼저 캡처하세요.'}
+            raise p.ProviderError(messages[req.image_mode])
     if req.image_mode in ('design','ai'):req.asset_id=''
     copy_req=req
     auto_video=req.count==0 and req.image_mode=='video' and bool(req.video_asset_ids)
@@ -75,6 +79,10 @@ async def create(req):
             aid=req.video_asset_ids[min(len(req.video_asset_ids)-1,int((i+.5)*len(req.video_asset_ids)/len(slides)))]
             slide['asset_id']=aid
             slide['image_credit']=json.loads((st.ASSETS/(aid+'.json')).read_text(encoding='utf-8'))['credit']
+    web_credits=[];web_notes=[]
+    if req.image_mode=='web' and not req.asset_id:
+        from .web_art import attach
+        web_credits,web_notes=await attach(slides,asset_save)
     if req.image_mode=='ai':
         for i,slide in enumerate(slides):
             prompt=(f'Card {i+1} of {len(slides)}. Create a distinct scene for THIS card. '
@@ -92,9 +100,14 @@ async def create(req):
     if req.asset_id:credit=json.loads((st.ASSETS/(req.asset_id+'.json')).read_text(encoding='utf-8'))['credit']
     if req.image_mode=='ai':credit='AI 생성 이미지 (카드별 생성)'
     if req.image_mode=='video' and req.video_asset_ids:credit='영상 구간별 자동 캡처 — 장면별 출처는 편집 정보에 기록. 이용 권한 확인 필요'
+    if req.image_mode=='web' and not req.asset_id:
+        credit='웹 검색 자료사진 · CC0/PDM · 상세 출처는 다운로드 content.json 참고' if web_credits else ''
     caption=content['caption']
     if credit:caption=caption[:max(0,2193-len(credit))]+'\n이미지: '+credit
     post={**req.model_dump(),**content,'caption':caption,'slides':slides,'id':uuid.uuid4().hex,'created_at':st.now(),'design_version':2,'status':'draft','facts_checked':False,'rights_checked':False,'image_credit':credit,'scheduled_at':None}
+    if req.image_mode=='web' and not req.asset_id:
+        post['web_image_credits']=web_credits
+        post['generation_note']=f'AI 웹 사진 자동 선택 {len(web_credits)}/{len(slides)}장. ' + ' / '.join(web_notes)
     if auto_video:post['generation_note']=f'원고와 사용 가능한 사진에 맞춰 {len(slides)}장으로 자동 구성했습니다.'
     post['images']=await asyncio.to_thread(render,post)
     st.save(post);st.log('카드 생성: '+post['slides'][0]['title'])
