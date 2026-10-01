@@ -392,6 +392,7 @@ function openEditor() {
         const form = new FormData(); form.append("file", file);
         const asset = await api("/api/assets/upload", {method: "POST", body: form});
         input.dataset.assetId = asset.asset_id;
+        editorDirty = true;
         $("rights-check").checked = false;
         toast(`${i + 1}번 카드 사진을 선택했습니다. 저장하면 반영됩니다.`);
       } catch (e) { toast(e.message); }
@@ -411,8 +412,7 @@ function openEditor() {
 }
 $("edit-btn").onclick = openEditor;
 $("close-editor").onclick = () => $("editor").close();
-$("save-edit").onclick = () =>
-  busy($("save-edit"), async () => {
+async function saveEditor() {
     const p = state.current;
     const body = {
       slides: p.slides.map((_, i) => ({
@@ -431,39 +431,85 @@ $("save-edit").onclick = () =>
       body: JSON.stringify(body),
     });
     showPreview();
-    await refresh();
     editorDirty = false;
     renderQuality(state.current);
-    $("evaluate-post").disabled = false;
-    toast("편집 내용과 확인 결과를 저장했습니다. 평가 상태를 확인하세요.");
-  });
+    $("facts-check").checked = state.current.facts_checked;
+    $("rights-check").checked = state.current.rights_checked;
+}
+let editorWorking = false;
+async function editorAction(fn) {
+  if (editorWorking) return;
+  if ([...document.querySelectorAll('[id^="photo-"]')].some(el => el.disabled) && ["draft", "failed"].includes(state.current.status)) {
+    toast("사진 업로드가 끝난 후 다시 시도하세요.", true); return;
+  }
+  editorWorking = true;
+  const controls = [...document.querySelectorAll('#editor input, #editor textarea, #editor button')];
+  const disabled = controls.map(el => el.disabled);
+  controls.forEach(el => el.disabled = true);
+  $("editor-notice").textContent = "처리 중입니다. 잠시 기다려 주세요.";
+  try { await fn(); }
+  catch (e) { $("editor-notice").textContent = e.message; toast(e.message, true); }
+  finally {
+    editorWorking = false;
+    controls.forEach((el, i) => el.disabled = disabled[i]);
+    const writable = ["draft", "failed"].includes(state.current.status);
+    ["save-edit", "evaluate-post", "schedule-post"].forEach(id => $(id).disabled = !writable);
+  }
+}
+$("save-edit").onclick = () => editorAction(async () => {
+  await saveEditor();
+  $("editor-notice").textContent = "저장 완료. " + reservationReason(state.current);
+  await refresh();
+});
+function reservationReason(p) {
+  if (editorDirty) return "수정 사항이 있습니다. 재평가 또는 예약 시 먼저 저장합니다.";
+  const q = p.quality || {};
+  if (q.status === "blocked") {
+    const failed = (q.cards || []).filter(c => c.critical || c.sync < 25 || c.grounding < 20 || c.hook+c.sync+c.grounding+c.cta < 75);
+    return "예약 보류: " + failed.map(c => `${c.card}번 카드 (${[
+      c.critical ? "중대 오류" : "",
+      c.sync < 25 ? `사진 일치 ${c.sync}/25점 미달` : "",
+      c.grounding < 20 ? `원고 근거 ${c.grounding}/20점 미달` : "",
+      c.hook+c.sync+c.grounding+c.cta < 75 ? "총점 75점 미달" : ""
+    ].filter(Boolean).join(", ")})`).join(" · ") + ". 위 수정 제안을 반영한 후 다시 평가하세요.";
+  }
+  if (q.status !== "passed") return "예약 전 저장된 내용 다시 평가가 필요합니다.";
+  if (!p.facts_checked || !p.rights_checked) return "평가 통과. 사실관계와 사진 사용권을 직접 확인하고 두 항목에 체크하세요.";
+  return "평가 통과. 미래의 예약 날짜와 시간을 선택한 후 예약하기를 누르세요.";
+}
 function renderQuality(p) {
   const q = p.quality || {};
-  const labels = {passed:"통과",blocked:"게시 보류",stale:"수정 후 재평가 필요",error:"평가 실패"};
+  const labels = {evaluating:"평가 중",passed:"통과",blocked:"게시 보류",stale:"수정 후 재평가 필요",error:"평가 실패"};
   $("quality-result").innerHTML = `<p><b>${esc(labels[q.status] || "평가 필요")}</b> ${esc(q.message || "")}</p>` + (q.cards || []).map(c => `<p><b>${c.card}번 · ${c.hook+c.sync+c.grounding+c.cta}/100점${c.critical ? " · 중대 오류" : ""}</b><br>후킹 ${c.hook}/25 · 사진 일치 ${c.sync}/40 · 원고 근거 ${c.grounding}/25 · CTA ${c.cta}/10<br>${esc(c.reason)}<br>수정 제안: ${esc(c.fix)}</p>`).join("");
-  $("schedule-post").disabled = !["draft","failed"].includes(p.status) || q.status !== "passed" || editorDirty;
+  $("editor-notice").textContent = reservationReason(p);
+  $("schedule-post").disabled = editorWorking || !["draft","failed"].includes(p.status);
 }
 $("editor").addEventListener("input", e => {
   if (e.target.id !== "schedule-at") {
     editorDirty = true;
-    $("schedule-post").disabled = true;
-    $("evaluate-post").disabled = true;
-    $("quality-result").textContent = "변경 내용을 저장한 후 평가 상태를 확인하세요.";
+    $("editor-notice").textContent = reservationReason(state.current);
   }
 });
-$("evaluate-post").onclick = () => busy($("evaluate-post"), async () => {
-  if (editorDirty) throw Error("변경 내용을 먼저 저장하세요.");
-  state.current.quality = {status:"error", message:"평가 중입니다. 실패하면 다시 시도하세요."};
+$("evaluate-post").onclick = () => editorAction(async () => {
+  if (editorDirty) await saveEditor();
+  state.current.quality = {status:"evaluating", message:"카드 이미지와 문안을 검토하고 있습니다."};
   renderQuality(state.current);
-  state.current = await api(`/api/posts/${state.current.id}/evaluate`, {method:"POST"});
+  $("editor-notice").textContent = "저장된 카드 이미지를 평가 중입니다…";
+  try { state.current = await api(`/api/posts/${state.current.id}/evaluate`, {method:"POST"}); }
+  catch (e) { state.current.quality = {status:"error", message:e.message}; renderQuality(state.current); throw e; }
   renderQuality(state.current); showPreview(); await refresh();
   toast(state.current.quality.status === "passed" ? "평가를 통과했습니다. 사실·권한 확인 후 예약하세요." : "게시를 보류했습니다. 수정 제안을 확인하세요.");
 });
 $("schedule-post").onclick = () =>
-  busy($("schedule-post"), async () => {
+  editorAction(async () => {
+    if (editorDirty) await saveEditor();
+    if (state.current.quality?.status !== "passed" || !state.current.facts_checked || !state.current.rights_checked)
+      throw Error(reservationReason(state.current));
     if (!$("schedule-at").value)
       throw Error("게시할 날짜와 시간을 선택하세요.");
-    await api(`/api/posts/${state.current.id}/schedule`, {
+    if (new Date($("schedule-at").value + "+09:00").getTime() <= Date.now())
+      throw Error("현재보다 이후의 예약 시간을 선택하세요. 한국 시간 기준입니다.");
+    state.current = await api(`/api/posts/${state.current.id}/schedule`, {
       method: "POST",
       body: JSON.stringify({ at: $("schedule-at").value + "+09:00" }),
     });

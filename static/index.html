@@ -422,6 +422,7 @@
         <p class="hint">장별 75점 이상 · 사진 일치 25/40 이상 · 원고 근거 20/25 이상 · 중대 오류 없음. AI 평가는 사실·권한 확인을 대체하지 않습니다. 생성 후 자동 평가하며 API 비용이 발생합니다.</p>
         <div id="quality-result" role="status"></div>
         <button id="evaluate-post" class="secondary">저장된 내용 다시 평가</button>
+        <p id="editor-notice" role="status" aria-live="polite" class="hint"></p>
         <label for="schedule-at">인스타그램 예약 시각 (한국 시간)</label>
         <div class="input-row">
           <input id="schedule-at" type="datetime-local" /><button
@@ -431,10 +432,10 @@
             예약하기
           </button>
         </div>
-        <p class="hint">예약 전 수정 및 확인 결과를 먼저 저장하세요.</p>
+        <p class="hint">재평가·예약 시 변경 사항을 먼저 저장합니다. 문안·사진을 바꾸면 재평가가 필요합니다.</p>
       </div>
     </dialog>
     <div id="toast" role="status" aria-live="polite" hidden></div>
-    <script src="/static/app.js?v=20261001-auto-count"></script>
+    <script src="/static/app.js?v=20261001-review-flow"></script>
   </body>
 </html>
