@@ -11,7 +11,7 @@ class Generate(BaseModel):
     asset_id: str = ''
     source_url: str = Field(default='', max_length=2000)
     source_name: str = Field(default='직접 입력', min_length=1, max_length=150)
-    tone: Literal['정보형','공감형','질문형'] = '질문형'
+    tone: Literal['후킹형','정보형','공감형','질문형'] = '후킹형'
     cta: str = Field(default='나중에 다시 볼 수 있도록 저장하세요. 여러분의 생각은 댓글로 알려주세요.', max_length=160)
 
 class Slide(BaseModel):
