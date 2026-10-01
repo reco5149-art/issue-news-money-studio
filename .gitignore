@@ -5,3 +5,15 @@ __pycache__/
 data/
 *.log
 *.zip
+# Private runtime credentials, exports and presentation deliverables
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.sqlite*
+Presentation/
+scripts/*presentation*.py
+DevelopDoc/assets/presentation-cover.png
