@@ -132,7 +132,7 @@ def local_copy(req):
 
 async def ai_copy(req):
     require('OPENAI_API_KEY')
-    slide={'type':'object','properties':{'title':{'type':'string'},'body':{'type':'string'}},'required':['title','body'],'additionalProperties':False}
+    slide={'type':'object','properties':{'title':{'type':'string'},'body':{'type':'string'},'visual_brief':{'type':'string'}},'required':['title','body','visual_brief'],'additionalProperties':False}
     schema={'type':'object','properties':{'slides':{'type':'array','items':slide},'caption':{'type':'string'}},'required':['slides','caption'],'additionalProperties':False}
     instructions=copy_instructions(req.tone)
     payload={'model':os.getenv('OPENAI_TEXT_MODEL','gpt-4.1-mini'),'store':False,'instructions':instructions,

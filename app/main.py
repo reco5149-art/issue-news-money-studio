@@ -78,8 +78,7 @@ async def create(req):
     if req.image_mode=='ai':
         for i,slide in enumerate(slides):
             prompt=(f'Card {i+1} of {len(slides)}. Create a distinct scene for THIS card. '
-                    f'Overall topic: {slides[0]["title"]}\n'
-                    f'This card title: {slide["title"]}\nThis card content: {slide["body"]}\n'
+                    f'Visual scene only: {content["slides"][i].get("visual_brief") or (slide["title"] + ": " + slide["body"] + ". Interpret the topic visually; never draw these words.")}\n'
                     'Premium editorial still life: a single meaningful object or environment directly tied to this card. '
                   'Natural directional light, tactile materials, restrained palette, uncluttered background. '
                   'No generic handshake, pointing person, random face, cartoon, collage or stock-photo grin. '
