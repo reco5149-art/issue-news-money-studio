@@ -2,6 +2,9 @@ $ErrorActionPreference = 'Stop'
 $studioRoot = Split-Path -Parent $PSScriptRoot
 $studioPidFile = Join-Path $studioRoot 'data\server.pid'
 try {
+    # An intentional stop must not be undone by the recovery task.
+    New-Item -ItemType Directory -Path (Join-Path $studioRoot 'data') -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $studioRoot 'data\server.paused') -Value (Get-Date -Format o)
     if (-not (Test-Path -LiteralPath $studioPidFile)) {
         Write-Host 'No managed server PID was found.'
         exit 0
