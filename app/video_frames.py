@@ -29,7 +29,8 @@ def capture_times(duration,count):
 
 
 def youtube_frames(url,count,data_dir):
-    url=youtube_url(url)
+    from .video_sources import normalize_url
+    url=normalize_url(url)
     ffmpeg=shutil.which('ffmpeg');probe=shutil.which('ffprobe')
     if not ffmpeg or not probe:raise ValueError('FFmpeg 설치 후 서버를 다시 실행하거나 영상 파일을 선택하세요.')
     with tempfile.TemporaryDirectory(prefix='video-',dir=data_dir) as temp:

@@ -21,6 +21,7 @@ from .render import render
 from .publishing import publish
 from .models import VideoFrames, FrameCleanup
 from .video_frames import youtube_frames
+from .video_sources import is_video_url, extract_video
 from . import quality
 from .frame_cleanup import clean_frames
 
@@ -29,6 +30,7 @@ st.init()
 LOCK=asyncio.Lock()
 DAILY_LOCK=asyncio.Lock()
 VIDEO_LOCK=asyncio.Lock()
+IMPORT_LOCK=asyncio.Lock()
 
 def lookup(pid):
     obj=st.get(pid)
@@ -323,7 +325,11 @@ def download(pid:str):
     return StreamingResponse(buf,media_type='application/zip',headers={'Content-Disposition':f'attachment; filename="issue-{pid[:8]}.zip"'})
 
 @app.post('/api/import')
-async def import_url(req:UrlInput):return await p.extract(req.url)
+async def import_url(req:UrlInput):
+    if not is_video_url(req.url):return await p.extract(req.url)
+    if IMPORT_LOCK.locked():raise HTTPException(409,'영상 내용을 분석 중입니다. 완료 후 다시 시도하세요.')
+    async with IMPORT_LOCK:
+        return await extract_video(req.url,st.DATA)
 
 @app.get('/api/discover')
 async def discover(category:str='AI'):

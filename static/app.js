@@ -133,6 +133,8 @@ $("source-text").oninput = () =>
 const demo =
   "AI 답변, 그대로 믿어도 될까요?\nAI가 만든 답변에는 잘못된 정보가 포함될 수 있습니다.\n중요한 숫자와 날짜는 원문 자료에서 다시 확인하세요.\n출처 링크를 직접 열고 실제로 같은 내용이 있는지 비교하세요.\n개인정보와 비밀번호는 공개 AI 서비스에 입력하지 마세요.";
 $("demo-btn").onclick = () => {
+  $("source-link").value = "";
+  $("source-review").open = true;
   $("source-text").value = demo;
   $("source-text").oninput();
   $("source-name").value = "시연용 자체 작성 원고";
@@ -141,19 +143,49 @@ $("demo-btn").onclick = () => {
   $("count").value = "5";
   toast("시연용 원고를 넣었습니다. 카드뉴스 생성하기를 눌러보세요.");
 };
+let importedLink = "";
+let importPending = false;
 async function importSource(url) {
+  url = url.trim();
+  if (!url) throw Error("영상 링크를 입력하세요.");
+  if (importPending) throw Error("영상 내용을 분석 중입니다. 완료 후 생성하세요.");
+  importPending = true;
+  importedLink = "";
+  $("source-link").value = url;
+  $("import-status").textContent = "자막 또는 음성을 분석 중입니다. 영상 길이에 따라 몇 분 걸릴 수 있습니다.";
+  try {
   const data = await api("/api/import", {
     method: "POST",
     body: JSON.stringify({ url }),
   });
+  if ($("source-link").value.trim() !== url)
+    throw Error("분석 중 링크가 바뀌었습니다. 새 링크의 내용을 다시 가져오세요.");
+  importedLink = url;
+  $("source-link").value = url;
   $("source-text").value = data.text;
   $("source-text").oninput();
   $("source-name").value = data.source_name;
   $("source-url").value = data.source_url;
+  $("import-status").textContent = data.warning || "원문을 가져왔습니다.";
   toast(data.warning || "원문을 가져왔습니다.");
+  } catch (error) {
+    $("import-status").textContent = error.message;
+    $("source-review").open = true;
+    throw error;
+  } finally { importPending = false; }
 }
 $("import-btn").onclick = () =>
   busy($("import-btn"), () => importSource($("source-link").value));
+$("manual-transcript-btn").onclick = () => {
+  if (importPending) return toast("영상 분석이 끝난 후 입력하세요.", true);
+  if ($("source-text").value.trim().length < 20)
+    return toast("직접 확인한 자막을 20자 이상 입력하세요.", true);
+  importedLink = $("source-link").value.trim();
+  $("source-url").value = importedLink;
+  $("source-name").value = "사용자가 직접 확인한 영상 자막";
+  $("import-status").textContent = "직접 입력한 자막을 사용합니다. 자동으로 영상을 분석한 결과가 아닙니다.";
+  toast("입력한 자막으로 생성할 준비가 되었습니다.");
+};
 function showPreview() {
   const p = state.current;
   if (!p) return;
@@ -184,6 +216,9 @@ $("next-slide").onclick = () => {
 };
 $("generate-btn").onclick = () =>
   busy($("generate-btn"), async () => {
+    const link = $("source-link").value.trim();
+    if (importPending) throw Error("영상 내용을 분석 중입니다. 완료 후 생성하세요.");
+    if (link && importedLink !== link) await importSource(link);
     const text = $("source-text").value.trim();
     if (text.length < 5) throw Error("주제나 원고를 5자 이상 입력하세요.");
     let videoAssets = [];
@@ -298,7 +333,7 @@ $("image-mode").onchange = () => {
   }
   if (mode === "video") {
     box.innerHTML =
-      '<label for="video-file">영상 파일 (선택 · 유튜브 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">카드뉴스 생성하기를 누르면 영상 구간별 장면을 자동 캡처해 카드마다 배치합니다. 파일이 없으면 위 출처 URL의 공개 유튜브 영상을 사용합니다. 20분·150MB 이하. AI가 홍보 화면을 제외하고 로고·방송 자막을 크롭합니다. 정리 API 비용이 발생하며 핵심 장면이 잘렸는지 확인하세요.</p>';
+      '<label for="video-file">영상 파일 (선택 · 공개 영상 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">카드뉴스 생성하기를 누르면 영상 구간별 장면을 자동 캡처해 카드마다 배치합니다. 파일이 없으면 위 출처 URL의 공개 유튜브·인스타그램·틱톡 영상을 사용합니다. 접근이 제한된 영상은 가져올 수 없습니다. 20분·150MB 이하. AI가 홍보 화면을 제외하고 로고·방송 자막을 크롭합니다. 정리 API 비용이 발생하며 핵심 장면이 잘렸는지 확인하세요.</p>';
     $("video-file").onchange = () => {
       if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
       const f = $("video-file").files[0];
