@@ -5,19 +5,26 @@ import json
 import os
 from PIL import Image, ImageOps
 from . import providers as p
+from . import analysis_cache
 
 
 async def structured(instructions, content, schema):
+    cache_key=analysis_cache.key([p.ai_provider(),p.ai_model('TEXT'),instructions,content,schema]) if all(x.get('type')=='input_text' for x in content) else None
+    if cache_key:
+        cached=analysis_cache.get(cache_key)
+        if cached is not None:return cached
     p.require('OPENAI_API_KEY')
-    data = await p.api('POST', 'https://api.openai.com/v1/responses',
-        headers={'Authorization': 'Bearer '+os.environ['OPENAI_API_KEY']},
-        json={'model': os.getenv('OPENAI_TEXT_MODEL', 'gpt-4.1-mini'), 'store': False,
+    data = await p.api('POST', p.ai_url('responses'),
+        headers=p.ai_headers(),
+        json={'model': p.ai_model('TEXT'), 'store': False,
               'instructions': instructions, 'input': [{'role': 'user', 'content': content}],
               'text': {'format': {'type': 'json_schema', 'name': 'web_art', 'strict': True, 'schema': schema}}})
     text = ''.join(c.get('text', '') for o in data.get('output', [])
                    for c in o.get('content', []) if c.get('type') == 'output_text')
     try:
-        return json.loads(text)
+        result=json.loads(text)
+        if cache_key:analysis_cache.put(cache_key,result)
+        return result
     except (ValueError, TypeError) as error:
         raise p.ProviderError('웹 사진 자동 선택 응답을 읽지 못했습니다.') from error
 
@@ -81,8 +88,10 @@ async def attach(slides, save_asset):
             credit = f"{item['title']} / {item['credit']} / {item['license']} / {item['license_url']} / {item['page']} / 카드 비율 크롭 · 이해를 돕는 자료사진"
             asset = save_asset(data, credit)
             slide.update(asset_id=asset['asset_id'], image_credit=credit, web_illustration=True)
+            slide['license_evidence']={**item,'provider':'Openverse'}
             used.add(item['url'])
             credits.append(f'{i+1}번: '+credit)
         except (ValueError,OSError) as error:
+            if p.stops_production(error):raise
             notes.append(f'{i+1}번: 웹 검색·사진 검토 실패로 자체 디자인 적용 ({str(error)[:120]})')
     return credits, notes

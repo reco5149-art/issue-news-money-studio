@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from .photo_finish import sharpness
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -29,6 +30,9 @@ def capture_times(duration,count):
 
 
 def youtube_frames(url,count,data_dir):
+    # A broad contact sheet can sample 15 distinct moments without extra captures.
+    count=max(1,min(15,count))
+    offsets=(-.18,0,.18) if count<=5 else (0,)
     from .video_sources import normalize_url
     url=normalize_url(url)
     ffmpeg=shutil.which('ffmpeg');probe=shutil.which('ffprobe')
@@ -38,7 +42,7 @@ def youtube_frames(url,count,data_dir):
         cmd=[sys.executable,'-m','yt_dlp','--ignore-config','--no-playlist','--no-progress',
              '--socket-timeout','15','--retries','0','--max-filesize','150M',
              '--match-filters','duration <= 1200 & !is_live',
-             '-f','bestvideo[height<=720][ext=mp4]/best[height<=720][ext=mp4]',
+             '-f','bestvideo[height<=1080][ext=mp4]/best[height<=1080][ext=mp4]',
              '-o',str(root/'source.%(ext)s'),url]
         try:
             r=subprocess.run(cmd,capture_output=True,timeout=180)
@@ -49,9 +53,13 @@ def youtube_frames(url,count,data_dir):
             duration=float(json.loads(info.stdout)['format']['duration'])
             frames=[]
             for i,at in enumerate(capture_times(duration,count)):
-                dest=root/f'{i}.jpg'
-                subprocess.run([ffmpeg,'-v','error','-nostdin','-ss',str(at),'-i',str(file),'-frames:v','1','-vf','scale=1280:-2','-y',str(dest)],capture_output=True,timeout=20,check=True)
-                frames.append((at,dest.read_bytes()))
+                nearby=[]
+                for offset in offsets:
+                    moment=max(0,min(duration-.01,at+offset));dest=root/f'{i}-{offset}.jpg'
+                    subprocess.run([ffmpeg,'-v','error','-nostdin','-ss',str(moment),'-i',str(file),'-frames:v','1','-q:v','2','-y',str(dest)],capture_output=True,timeout=20,check=True)
+                    raw=dest.read_bytes();nearby.append((sharpness(raw),moment,raw))
+                _,at,raw=max(nearby,key=lambda x:x[0])
+                frames.append((at,raw))
             return frames
         except (subprocess.SubprocessError,KeyError,json.JSONDecodeError,OSError) as e:
             raise ValueError('영상 캡처가 지연되거나 실패했습니다. 영상 파일을 선택해 다시 시도하세요.') from e

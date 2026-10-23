@@ -44,6 +44,17 @@ def test_edit_persists(client):
     stored=client.get('/api/posts/'+p['id']).json()
     assert stored['slides'][0]['title']=='변경한 제목' and stored['facts_checked']
 
+
+def test_new_and_edited_captions_keep_urls_only_in_internal_records(client):
+    p=generate(client,source_url='https://example.com/story',source_name='원문 매체')
+    assert p['source_url']=='https://example.com/story' and 'https://' not in p['caption']
+    body={'slides':p['slides'],'caption':'보도에 따르면 아직 예정입니다.\n출처: MBC https://example.net/new',
+          'source_name':'MBC','source_url':'https://example.com/story'}
+    updated=client.put('/api/posts/'+p['id'],json=body).json()
+    assert '예정입니다.' in updated['caption'] and 'https://' not in updated['caption']
+    assert updated['caption_source_urls']==['https://example.net/new']
+    assert updated['source_url']==p['source_url']
+
 def test_invalid_input_and_missing_keys(client):
     assert client.post('/api/generate',json={'text':'너무 짧음','count':11}).status_code==422
     assert client.post('/api/generate',json={'text':'검증할 원고입니다.','engine':'ai'}).status_code==400
@@ -76,7 +87,8 @@ def test_ai_images_follow_each_slide_and_survive_edit(client,monkeypatch):
     assert len(set(ids))==3 and len(prompts)==3
     for i,s in enumerate(p['slides']):
         assert s['title'] in prompts[i] and s['body'] in prompts[i]
-    colors=[Image.open(st.MEDIA/p['id']/f'{i+1:02}.png').getpixel((500,180)) for i in range(3)]
+    # The centered photo remains distinct after title placement changes.
+    colors=[Image.open(st.MEDIA/p['id']/f'{i+1:02}.png').getpixel((540,675)) for i in range(3)]
     assert len(set(colors))==3
     body={'slides':[{'title':s['title'],'body':s['body']} for s in p['slides']],
           'caption':p['caption'],'source_name':p['source_name'],'source_url':''}
@@ -204,10 +216,40 @@ def test_daily_cap(client,monkeypatch):
     r=client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at})
     assert r.status_code==400 and '10개' in r.json()['detail']
 
+def test_extra_schedule_approval_is_scoped_to_content_and_time(client,monkeypatch):
+    configure_instagram(monkeypatch);p=generate(client)
+    at=(datetime.now(st.KST)+timedelta(hours=1)).isoformat()
+    for n in range(10):st.save({**p,'id':f'cap-{n}','status':'scheduled','scheduled_at':at})
+    p.update(facts_checked=True,rights_checked=True);approve_quality(p)
+    approval={'requested_by':'user','approved_at':st.now(),'at':at,'fingerprint':quality.fingerprint(p)}
+    st.set_setting('extra_post_approval:'+p['id'],approval)
+    wrong=(datetime.fromisoformat(at)+timedelta(minutes=1)).isoformat()
+    assert client.post(f'/api/posts/{p["id"]}/schedule',json={'at':wrong}).status_code==400
+    changed={**p,'caption':'수정된 캡션'}
+    assert not main.authorized_extra_post(changed,datetime.fromisoformat(at))
+    assert client.post(f'/api/posts/{p["id"]}/schedule',json={'at':at}).status_code==200
+
+def test_tick_only_publishes_approved_extra_once(client,monkeypatch):
+    configure_instagram(monkeypatch);p=generate(client)
+    now=datetime.now(st.KST);at=(now-timedelta(minutes=1)).isoformat()
+    for n in range(10):st.save({**p,'id':f'cap-{n}','status':'published','published_at':now.isoformat()})
+    p.update(facts_checked=True,rights_checked=True,status='scheduled',scheduled_at=at);approve_quality(p)
+    st.set_setting('extra_post_approval:'+p['id'],{'requested_by':'user','approved_at':st.now(),'at':at,'fingerprint':quality.fingerprint(p)})
+    # A capped ordinary reservation ahead of the extra post must not starve it.
+    other={**p,'id':'ordinary','created_at':(now+timedelta(seconds=1)).isoformat()};st.save(other)
+    calls=[]
+    async def fake_publish(post):
+        quality.ensure_passed(post);calls.append(post['id'])
+        post.update(status='published',instagram_id='test-media',published_at=st.now());st.save(post)
+    monkeypatch.setattr(main,'publish',fake_publish)
+    asyncio.run(main.tick());asyncio.run(main.tick())
+    assert calls==[p['id']]
+    assert st.get('ordinary')['status']=='scheduled'
+
 @pytest.mark.parametrize('fail',[False,True])
 def test_publish_result_uncertainty(client,monkeypatch,fail):
     configure_instagram(monkeypatch);p=generate(client,count=2)
-    p.update(facts_checked=True,rights_checked=True,status='scheduled');approve_quality(p)
+    p.update(facts_checked=True,rights_checked=True,status='scheduled',automation_hold='이전 검토 보류');approve_quality(p)
     calls=[]
     async def fake(method,url,**kwargs):
         calls.append(url)
@@ -216,22 +258,30 @@ def test_publish_result_uncertainty(client,monkeypatch,fail):
             return {'id':'published-id'}
         if method=='GET':return {'status_code':'FINISHED'}
         return {'id':'container-'+str(len(calls))}
+    async def clean(post):return
+    monkeypatch.setattr(publishing,'ensure_clean',clean)
+    monkeypatch.setattr(publishing,'verify_delivery',clean)
     monkeypatch.setattr(publishing,'api',fake)
     monkeypatch.setattr(publishing,'public_url',lambda url:url)
     if fail:
         with pytest.raises(providers.ProviderError):asyncio.run(publishing.publish(p))
         assert st.get(p['id'])['status']=='needs_check'
+        assert st.get(p['id'])['automation_hold']=='이전 검토 보류'
     else:
         asyncio.run(publishing.publish(p));assert st.get(p['id'])['instagram_id']=='published-id'
+        assert 'automation_hold' not in st.get(p['id'])
+        assert st.get(p['id'])['resolved_automation_hold']['reason']=='이전 검토 보류'
     assert sum(u.endswith('media_publish') for u in calls)==1
 
 def test_daily_dedupe(client,monkeypatch):
     monkeypatch.setenv('OPENAI_API_KEY','test-only')
     st.set_setting('daily',{'daily_target':10,'categories':['AI'],'hour':8,'enabled':False})
-    async def discover(category):return {'items':[{'title':'검증된 기사','url':'https://example.com/article','score':80,'category':'AI'}]}
-    async def extract(url):return {'text':'기사가 설명하는 사실입니다.','source_name':'test','source_url':url}
+    b=io.BytesIO();Image.new('RGB',(640,480),'blue').save(b,format='JPEG')
+    aid=main.asset_save(b.getvalue(),'자료화면')['asset_id']
+    async def candidates():return [{'id':'abcdefghijk','snippet':{'channelTitle':'test','publishedAt':datetime.now(st.KST).isoformat()},'statistics':{'viewCount':'100000'},'status':{'privacyStatus':'public'}}]
+    async def material(*args):return {},[{'text':'기사가 설명하는 사실입니다.'}],{'image_mode':'video','video_asset_ids':[aid]}
     async def ai(req):return providers.local_copy(req)
-    monkeypatch.setattr(providers,'discover',discover);monkeypatch.setattr(providers,'extract',extract);monkeypatch.setattr(providers,'ai_copy',ai)
+    monkeypatch.setattr(main.autopilot,'candidates',candidates);monkeypatch.setattr(main.autopilot,'material',material);monkeypatch.setattr(providers,'ai_copy',ai)
     r=client.post('/api/daily/run');assert r.status_code==200 and len(r.json()['created'])==1
     assert client.post('/api/daily/run').status_code==400
 
@@ -248,6 +298,31 @@ def test_uploaded_frames_cleaned_to_new_assets(client,monkeypatch):
     assert response.json()['assets'][0]['asset_id']!=original['asset_id']
     assert (st.ASSETS/(original['asset_id']+'.jpg')).exists()
     assert client.post('/api/video/clean-frames',json={'asset_ids':['../../bad'],'count':1}).status_code==400
+
+def test_kie_images_use_card_ratio_and_credit(client,monkeypatch):
+    monkeypatch.setenv('KIE_API_KEY','test-kie-key')
+    monkeypatch.delenv('KIE_IMAGE_MODEL',raising=False)
+    seen=[]
+    async def fake_kie(prompt,ratio='4:5'):
+        seen.append((prompt,ratio))
+        buf=io.BytesIO();Image.new('RGB',(300,200),['red','green','blue'][len(seen)-1]).save(buf,format='JPEG')
+        return buf.getvalue()
+    async def no_openai(prompt):raise AssertionError('OpenAI image must not be called')
+    monkeypatch.setattr(providers,'kie_image',fake_kie)
+    monkeypatch.setattr(providers,'ai_image',no_openai)
+    p=generate(client,image_mode='ai',ai_image_provider='kie',ratio='1:1')
+    assert len(seen)==3 and {r for _,r in seen}=={'1:1'}
+    assert len({s['asset_id'] for s in p['slides']})==3
+    assert all('KIE AI' in s['image_credit'] for s in p['slides'])
+    assert 'KIE AI' in p['caption']
+
+def test_kie_missing_key_fails_before_generation(client,monkeypatch):
+    monkeypatch.delenv('KIE_API_KEY',raising=False)
+    called=[]
+    async def fake_kie(prompt,ratio='4:5'):called.append(prompt)
+    monkeypatch.setattr(providers,'kie_image',fake_kie)
+    r=client.post('/api/generate',json={'text':'AI 정보를 확인하는 방법','image_mode':'ai','ai_image_provider':'kie'})
+    assert r.status_code==400 and 'KIE_API_KEY' in r.json()['detail'] and called==[]
 
 
 @pytest.mark.parametrize('available,expected_calls',[(1,[1]),(2,[0,2])])

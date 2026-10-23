@@ -1,8 +1,12 @@
+from .copy_policy import public_source_label
 """Versioned editorial layout; legacy drafts retain their original pixels."""
 from PIL import Image, ImageDraw, ImageOps
 
 
 def render_editorial(post, media, assets, sizes, colors, font, fit):
+    if post.get('visual_style') == 'video_capture':
+        from .capture_render import render_capture
+        return render_capture(post, media, assets, sizes, font, fit)
     w, h = sizes[post['ratio']]
     out = media / post['id']
     out.mkdir(exist_ok=True)
@@ -48,7 +52,7 @@ def render_editorial(post, media, assets, sizes, colors, font, fit):
         body_y = rule_y + 24
         fit(d, slide['body'], (64, body_y), w-128, h-146-body_y, 36, muted)
         d.line((64, h-111, w-64, h-111), fill=muted, width=1)
-        source = post['source_name'].replace('\n', ' ')
+        source = public_source_label(post['source_name']).replace('\n', ' ')
         while font(20).getlength(source) > w-280:
             source = source[:-2] + '…'
         d.text((64, h-96), source, font=font(20), fill=muted)

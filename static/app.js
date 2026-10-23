@@ -88,7 +88,9 @@ async function refresh() {
     (p) => p.created_at.slice(0, 10) === today,
   ).length;
   $("daily-count").textContent = count;
-  $("daily-bar").style.width = Math.min(100, count * 10) + "%";
+  const target = state.status.daily.daily_target;
+  $("daily-target-label").textContent = ` / ${target}개`;
+  $("daily-bar").style.width = Math.min(100, count * 100 / target) + "%";
   renderLibrary();
   renderSchedule();
   renderSettings();
@@ -241,6 +243,7 @@ $("generate-btn").onclick = () =>
       count: Number($("count").value),
       engine: $("engine").value,
       image_mode: imageMode,
+      ai_image_provider: $("ai-image-provider")?.value || "openai",
       asset_id: state.asset?.asset_id || "",
       source_name: $("source-name").value || "직접 입력",
       source_url: $("source-url").value,
@@ -287,7 +290,7 @@ async function captureVideoFrames(count) {
   if (!Number.isFinite(v.duration) || v.duration <= 0 || v.duration > 1200) throw Error("20분 이하의 일반 영상 파일을 선택하세요.");
   v.pause();
   const canvas = document.createElement("canvas");
-  const scale = Math.min(1, 1280 / v.videoWidth);
+  const scale = Math.min(1, 3840 / v.videoWidth);
   canvas.width = Math.round(v.videoWidth * scale); canvas.height = Math.round(v.videoHeight * scale);
   const assets = [];
   const candidates = count === 0 ? 20 : Math.min(20, count * 3);
@@ -314,6 +317,10 @@ $("image-mode").onchange = () => {
     URL.revokeObjectURL(videoObjectUrl);
     videoObjectUrl = null;
   }
+  if (mode === "ai") {
+    box.innerHTML =
+      '<label for="ai-image-provider">AI 이미지 엔진</label><select id="ai-image-provider"><option value="kie" selected>KIE AI · 기본 nano-banana-2</option><option value="openai">OpenAI · gpt-image-1</option></select><p class="hint">카드마다 이미지를 1장씩 생성하므로 장수만큼 크레딧·이용료가 발생합니다. KIE AI는 카드 사진 영역 비율로 만들며 장당 수십 초 걸릴 수 있습니다. 생성된 이미지는 설명용이며 실제 보도사진이 아닙니다.</p>';
+  }
   if (mode === "upload") {
     box.innerHTML =
       '<label for="image-file">사진 파일 · 15MB 이하</label><input id="image-file" type="file" accept="image/png,image/jpeg,image/webp">';
@@ -333,7 +340,7 @@ $("image-mode").onchange = () => {
   }
   if (mode === "video") {
     box.innerHTML =
-      '<label for="video-file">영상 파일 (선택 · 공개 영상 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">카드뉴스 생성하기를 누르면 영상 구간별 장면을 자동 캡처해 카드마다 배치합니다. 파일이 없으면 위 출처 URL의 공개 유튜브·인스타그램·틱톡 영상을 사용합니다. 접근이 제한된 영상은 가져올 수 없습니다. 20분·150MB 이하. AI가 홍보 화면을 제외하고 로고·방송 자막을 크롭합니다. 정리 API 비용이 발생하며 핵심 장면이 잘렸는지 확인하세요.</p>';
+      '<label for="video-file">영상 파일 (선택 · 공개 영상 링크는 생략 가능)</label><input id="video-file" type="file" accept="video/*"><video id="local-video" controls hidden></video><p class="hint">링크의 영상을 캡처하고 약 1.1배 확대를 먼저 시도합니다. 방송 로고·자막은 화면 밖으로 크롭하고 얼굴이나 핵심 동작이 잘리는 장면은 제외합니다. 제목과 본문은 짧게, 캡션은 링크 없이 생성합니다. 상세 출처는 편집 정보에 보관합니다. 공개 유튜브·인스타그램·틱톡 또는 보유 영상, 20분·150MB 이하. AI 장면 정리 비용이 발생합니다.</p>';
     $("video-file").onchange = () => {
       if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
       const f = $("video-file").files[0];
@@ -403,7 +410,18 @@ function updateLibrarySelection() {
   $("library-delete").disabled = $("library-restore").disabled = selected.length === 0;
   $("library-delete").hidden = $("library-filter").value === "trash";
   $("library-restore").hidden = $("library-filter").value !== "trash";
+  $("library-schedule").disabled = selected.length === 0;
+  $("library-schedule").hidden = $("library-filter").value === "trash";
 }
+$("library-schedule").onclick = () => busy($("library-schedule"), async () => {
+  const ids = [...document.querySelectorAll("[data-select-post]")].filter(b => b.checked).map(b => b.dataset.selectPost);
+  if (!ids.length) return;
+  const result = await api("/api/schedule/batch", {method:"POST",body:JSON.stringify({post_ids:ids})});
+  librarySelected.clear();
+  await refresh();
+  view("schedule");
+  toast(`${result.reservations.length}개를 시간대별로 예약했습니다. 아래 게시 시각을 확인하세요.`);
+}).finally(updateLibrarySelection);
 $("library-select-all").onchange = e => {
   document.querySelectorAll("[data-select-post]").forEach(b => {
     b.checked = e.target.checked;
@@ -430,7 +448,7 @@ function renderLibrary() {
     ? items
         .map(
           (p) =>
-            `<article class="content-card">${["publishing","needs_check"].includes(p.status) ? '<p class="hint">게시 결과 확인 후 삭제할 수 있습니다.</p>' : `<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" style="width:auto" data-select-post="${p.id}" aria-label="${esc(p.slides[0].title)} 선택" ${librarySelected.has(p.id) ? "checked" : ""}>콘텐츠 선택</label>`}<img loading="lazy" src="${esc(p.images[0])}" alt="${esc(p.slides[0].title)}"><p><span class="badge">${labels[p.status]}</span>${esc(p.category)} · ${p.ratio} · ${p.slides.length}장</p><h3>${esc(p.slides[0].title)}</h3><div class="input-row">${p.trashed_at ? '<span class="hint">복원 후 편집할 수 있습니다.</span>' : `<button class="secondary" data-open="${p.id}">검토 · 예약</button>`}<a class="primary" href="/api/posts/${p.id}/download">다운로드</a></div>${p.error ? `<p>${esc(p.error)}</p>` : ""}</article>`,
+            `<article class="content-card">${["publishing","needs_check"].includes(p.status) ? '<p class="hint">게시 결과 확인 후 삭제할 수 있습니다.</p>' : `<label style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" style="width:auto" data-select-post="${p.id}" aria-label="${esc(p.slides[0].title)} 선택" ${librarySelected.has(p.id) ? "checked" : ""}>콘텐츠 선택</label>`}<img loading="lazy" src="${esc(p.images[0])}" alt="${esc(p.slides[0].title)}"><p><span class="badge">${labels[p.status]}</span>${esc(p.category)} · ${p.ratio} · ${p.slides.length}장</p><h3>${esc(p.slides[0].title)}</h3><div class="input-row">${p.trashed_at ? '<span class="hint">복원 후 편집할 수 있습니다.</span>' : `<button class="secondary" data-open="${p.id}">검토 · 예약</button>`}<a class="primary" href="/api/posts/${p.id}/download">다운로드</a></div>${p.error ? `<p>${esc(p.error)}</p>` : ""}${p.status === "draft" && p.automation_hold ? `<p class="hint">자동 제작 보류: ${esc(p.automation_hold)}</p>` : ""}</article>`,
         )
         .join("")
     : '<div class="empty">아직 만든 카드뉴스가 없습니다.<br>예시 원고로 첫 콘텐츠를 만들어보세요.</div>';
@@ -544,12 +562,12 @@ function reservationReason(p) {
   if (editorDirty) return "수정 사항이 있습니다. 재평가 또는 예약 시 먼저 저장합니다.";
   const q = p.quality || {};
   if (q.status === "blocked") {
-    const failed = (q.cards || []).filter(c => c.critical || c.sync < 25 || c.grounding < 20 || c.hook+c.sync+c.grounding+c.cta < 75);
+    const failed = (q.cards || []).filter(c => c.critical || c.sync < 25 || c.grounding < 20 || c.hook+c.sync+c.grounding+c.cta < 65);
     return "예약 보류: " + failed.map(c => `${c.card}번 카드 (${[
       c.critical ? "중대 오류" : "",
       c.sync < 25 ? `사진 일치 ${c.sync}/25점 미달` : "",
       c.grounding < 20 ? `원고 근거 ${c.grounding}/20점 미달` : "",
-      c.hook+c.sync+c.grounding+c.cta < 75 ? "총점 75점 미달" : ""
+      c.hook+c.sync+c.grounding+c.cta < 65 ? "총점 65점 미달" : ""
     ].filter(Boolean).join(", ")})`).join(" · ") + ". 수정 후 재평가하거나, 사실·사용권 확인 후 ‘점수 경고 확인 · 게시 승인’을 누르세요.";
   }
   if (q.status !== "passed") return "예약 전 저장된 내용 다시 평가가 필요합니다.";
@@ -636,6 +654,25 @@ function renderSchedule() {
   const c = state.status.daily;
   $("daily-enabled").checked = c.enabled;
   $("daily-hour").value = c.hour;
+  $("daily-target").value = c.daily_target;
+  const cadence = state.status.cadence;
+  $("cadence-enabled").checked = cadence.enabled;
+  $("cadence-limit").value = cadence.daily_limit;
+  $("cadence-start").value = cadence.start_hour;
+  $("cadence-size").value = cadence.batch_size;
+  $("cadence-batch-gap").value = cadence.batch_interval;
+  $("cadence-item-gap").value = cadence.item_interval;
+  const times = [];
+  for (let start = cadence.start_hour * 60; start < 1440 && times.length < cadence.daily_limit; start += cadence.batch_interval) {
+    for (let i = 0; i < cadence.batch_size && times.length < cadence.daily_limit; i++) {
+      const minute = start + i * cadence.item_interval;
+      if (minute >= 1440 || (minute >= 60 && minute < 360)) continue;
+      times.push(`${String(Math.floor(minute / 60)).padStart(2,"0")}:${String(minute % 60).padStart(2,"0")}`);
+    }
+  }
+  $("cadence-summary").textContent = `${cadence.enabled ? (cadence.autopilot ? "자동 제작·게시 켜짐" : "검토 완료 글 자동 예약만 켜짐") : "자동 예약 꺼짐"} · 하루 최대 ${cadence.daily_limit}개 · 게시물 사이 최소 ${cadence.item_interval}분 · ${times.join(" / ")}`;
+  $("autopilot-status").textContent = (state.status.autopilot?.message || "아직 자동 제작 전입니다.") + sourcePolicyLabel(state.status);
+  renderOperations(state.status);
   const posts = state.posts
     .filter((p) =>
       ["scheduled", "publishing", "needs_check"].includes(p.status),
@@ -668,7 +705,7 @@ $("daily-save").onclick = () =>
       body: JSON.stringify({
         enabled: $("daily-enabled").checked,
         hour: Number($("daily-hour").value),
-        daily_target: 10,
+        daily_target: Number($("daily-target").value),
         categories: ["뉴스", "이슈", "연예", "경제", "AI"],
       }),
     });
@@ -682,6 +719,20 @@ $("daily-run").onclick = () =>
     await loadEvents();
     toast(r.message);
   });
+$("cadence-save").onclick = () => busy($("cadence-save"), async () => {
+  await api("/api/posting-cadence", {method:"PUT",body:JSON.stringify({
+    enabled:$("cadence-enabled").checked, autopilot:$("cadence-enabled").checked, daily_limit:Number($("cadence-limit").value),
+    start_hour:Number($("cadence-start").value), batch_size:Number($("cadence-size").value),
+    batch_interval:Number($("cadence-batch-gap").value), item_interval:Number($("cadence-item-gap").value)
+  })});
+  await refresh();
+  toast($("cadence-enabled").checked ? "자동 제작·검증·예약·게시를 켰습니다. 통과한 새 콘텐츠부터 게시합니다." : "자동 제작을 껐습니다. 이미 예약된 글은 개별 취소할 수 있습니다.");
+});
+$("autopilot-retry").onclick = () => busy($("autopilot-retry"), async () => {
+  const result = await api("/api/autopilot/retry", {method:"POST"});
+  await refresh();
+  toast(result.message);
+});
 async function loadEvents() {
   try {
     const d = await api("/api/events");
@@ -701,9 +752,9 @@ function renderSettings() {
   const list = [
     [
       "ai",
-      "AI 문안 · 이미지",
-      "OPENAI_API_KEY",
-      "원고 요약, 후킹 문구, 주제 설명용 이미지 생성",
+      state.status.ai_settings?.provider === "semyung" ? "학교 AI · 세명대학교" : "개인 OpenAI",
+      "연결 선택: AI_PROVIDER · 학교 설정: set-school-api.bat",
+      `문안 모델: ${esc(state.status.ai_settings?.models?.text || "기본 모델")} · 학교 연결에서는 문안·사진 검수를 지원합니다. 음성 전사·AI 이미지 생성은 미지원이며 개인 API로 자동 전환하지 않습니다.`,
     ],
     [
       "kie",
@@ -739,3 +790,25 @@ function renderSettings() {
 }
 $("image-mode").onchange();
 refresh().catch((e) => toast(e.message, true));
+// Refresh production status without overwriting unsaved scheduling inputs.
+setInterval(async () => {
+  if (document.hidden || $("view-schedule").hidden) return;
+  try {
+    const latest = await api("/api/status");
+    $("autopilot-status").textContent = (latest.autopilot?.message || "아직 자동 제작 전입니다.") + sourcePolicyLabel(latest);
+    renderOperations(latest);
+  } catch (_) { $("autopilot-status").textContent = "프로그램 연결을 확인하세요. 제작 상태를 확인하지 못했습니다."; }
+}, 15000);
+
+function sourcePolicyLabel(status) {
+  const p = status.source_policy;
+  return p ? ` · 서버 소재 기준: 업로드 ${p.max_age_hours}시간 이내 / ${p.min_views.toLocaleString()}회 이상 / 게시 직전 재확인` : "";
+}
+
+function renderOperations(status) {
+  const op = status.operations;
+  if (!op) return;
+  $("operations-status").textContent = op.summary;
+  const r = op.rules;
+  $("operations-rules").textContent = `서버 운영 기준 ${op.version} · 자동/수동 공통 게시 검사 · 사진·최종 로고·공개 이미지 확인 · 최소 ${r.min_post_interval_minutes}분 간격 · 소재 ${r.source_attempt_limit}회 / 생성 ${r.generation_attempt_limit}회 / 영상당 ${r.video_attempt_limit}회 · 오늘 전체 게시 ${op.today_published}건 중 실제 조회 확인 ${op.today_live_verified}건`;
+}

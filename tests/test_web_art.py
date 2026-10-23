@@ -1,5 +1,6 @@
 import asyncio
 import io
+import pytest
 from PIL import Image
 from app import web_art
 
@@ -29,3 +30,15 @@ def test_search_failure_falls_back_without_unrelated_photo(monkeypatch):
     slides=[dict(title='School',body='building')]
     credits,notes=asyncio.run(web_art.attach(slides,lambda *args:None))
     assert not credits and '실패' in notes[0] and 'asset_id' not in slides[0]
+
+def test_quota_does_not_continue_to_next_card(monkeypatch):
+    calls=[]
+    async def structured(*args):return {'queries':['one','two']}
+    async def search(*args,**kwargs):
+        calls.append(1)
+        raise web_art.p.ProviderError('한도 초과',code='openai_quota')
+    monkeypatch.setattr(web_art,'structured',structured)
+    monkeypatch.setattr(web_art.p,'web_images',search)
+    with pytest.raises(web_art.p.ProviderError):
+        asyncio.run(web_art.attach([{'title':'one'},{'title':'two'}],lambda *args:None))
+    assert calls==[1]

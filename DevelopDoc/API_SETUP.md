@@ -21,16 +21,41 @@
 모델 접근 권한, 계정 인증, 사용 한도에 따라 API가 거절될 수 있습니다. 실패 메시지를 확인하고
 프로젝트 키·결제·모델 접근 권한을 점검하세요. 실제 키 값은 공유하지 않습니다.
 
-## 2. 뉴스 소재 — Naver 검색 API
+## 1-1. 카드 AI 이미지 — KIE AI (선택)
 
-1. https://developers.naver.com/apps/#/register 에서 애플리케이션을 직접 등록합니다.
-2. 사용 API에 **검색**을 선택합니다. 화면의 필수 환경 정보는 본인 앱 정보로 입력합니다.
-3. 발급된 Client ID와 Client Secret을 확인합니다.
-4. `.env`에 `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`을 입력합니다.
+1. https://kie.ai/api-key 에서 API 키를 만들고 크레딧을 충전합니다.
+2. 프로젝트 폴더의 `set-kie-key.bat`을 더블클릭하고 키를 붙여넣습니다. `.env`와 `data\external-api-keys.env`에
+   저장(기존 `.env`는 `data\env-backup-*.env`로 백업) → 인증 확인(과금 없음) → 서버 재시작까지 자동으로 합니다.
+   키는 화면에 표시하지 않습니다. 직접 입력하려면 `.env`의 `KIE_API_KEY`를 수정합니다. 선택값: `KIE_IMAGE_MODEL`(기본 `nano-banana-2`),
+   `KIE_IMAGE_RESOLUTION`(기본 `1K`, `2K`/`4K`는 크레딧이 더 듭니다).
+3. 서버를 재시작한 뒤 이미지 제작 방식 **AI 자체 이미지 생성 → AI 이미지 엔진: KIE AI**를 선택합니다.
+
+요청 흐름: `POST https://api.kie.ai/api/v1/jobs/createTask` → `GET /api/v1/jobs/recordInfo?taskId=`를
+3초 간격으로 최대 180초 조회 → 결과 URL 이미지를 내려받아 카드에 적용합니다. KIE는 오류를 HTTP 200과
+`code` 값(401 키, 402 크레딧 부족, 422 형식, 429 한도)으로 알려주므로 `code`를 검사합니다.
+시간 초과 시 자동 재요청하지 않습니다(이미 과금됐을 수 있음). KIE 기록에서 작업 번호를 확인하세요.
+`KIE_IMAGE_MODEL`을 바꾸면 모델마다 입력 형식이 다를 수 있어 별도 확인이 필요합니다.
+키 인증만 확인: `.venv\Scripts\python.exe scripts\check_media_connections.py` (이미지 생성·과금 없음).
+
+## 2. 뉴스 소재 — NAVER API HUB
+
+2026년 7월 31일부터 기존 개발자센터의 검색 API 신규 신청이 중단되었습니다.
+기존 앱에서 검색 API를 추가하려 하면 등록 불가 오류가 날 수 있습니다.
+
+1. https://www.ncloud.com/product/applicationService/naverApiHub 에서 네이버 클라우드 계정으로 로그인합니다.
+2. 콘솔의 **NAVER API HUB → Subscription**에서 약관과 개인정보 제공 내용을 확인하고 이용 신청합니다. 현재 요금 조건도 확인하세요.
+3. **Application → Application 등록**에서 검색 API를 선택하고 이름을 입력합니다. 인증 정보에서 Client ID와 Client Secret을 확인합니다.
+4. `.env`에 `NAVER_CLIENT_ID`, `NAVER_CLIENT_SECRET`, `NAVER_API_MODE=hub`를 입력합니다. 일반 NCP 계정 Access Key가 아닌 API HUB 애플리케이션의 키를 사용합니다.
 5. 앱 재시작 → 트렌드 탐색 → AI/경제 등 한 주제로 실시간 검색합니다.
 6. 원문을 가져와 제목·본문·출처가 맞는지 확인합니다.
 
-공식 안내: https://developers.naver.com/docs/serviceapi/search/news/news.md
+호출 주소는 `https://naverapihub.apigw.ntruss.com/search/v1/news`이며,
+인증 헤더는 `X-NCP-APIGW-API-KEY-ID`, `X-NCP-APIGW-API-KEY`입니다.
+기존 개발자센터에서 이미 검색 권한을 발급받은 키만 `NAVER_API_MODE=legacy`로 사용할 수 있습니다.
+키가 입력됐다는 표시만으로 연결 성공을 판단하지 않고 실제 뉴스 검색 결과를 확인합니다.
+
+공식 안내: https://api.ncloud-docs.com/docs/naver-api-hub-search-news
+이관 공지: https://developers.naver.com/notice/article/32530
 
 ## 3. 영상 소재 — YouTube Data API
 

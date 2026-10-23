@@ -24,6 +24,7 @@ def move(ids, restore=False):
                 post.pop('trashed_at', None)
             elif not post.get('trashed_at'):
                 post['trashed_at'] = st.now()
+                post['auto_schedule_excluded'] = True
                 if post['status'] == 'scheduled':
                     post['status'] = 'draft'
                     post['scheduled_at'] = None

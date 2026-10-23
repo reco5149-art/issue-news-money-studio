@@ -1,3 +1,4 @@
+from .copy_policy import public_source_label
 import os
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance
@@ -6,12 +7,7 @@ from .storage import MEDIA, ASSETS
 SIZES = {'4:5': (1080,1350), '1:1': (1080,1080), '9:16': (1080,1920)}
 COLORS = {'뉴스':'#afd96b','이슈':'#ff9569','연예':'#dda6ee','경제':'#83baff','AI':'#c7ee81'}
 
-def font(size, bold=False):
-    paths = [os.getenv('FONT_PATH',''), 'C:/Windows/Fonts/malgunbd.ttf' if bold else 'C:/Windows/Fonts/malgun.ttf',
-             '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc' if bold else '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc']
-    for p in paths:
-        if p and Path(p).is_file(): return ImageFont.truetype(p,size)
-    raise ValueError('한글 글꼴을 찾지 못했습니다. .env의 FONT_PATH를 지정하세요.')
+from .fonts import font
 
 def wrap(text, f, width):
     rows=[]
@@ -32,6 +28,9 @@ def fit(draw, text, xy, width, height, size, color, bold=False):
     for i,line in enumerate(lines): draw.text((xy[0],xy[1]+i*step),line,font=f,fill=color)
 
 def render(post):
+    if post.get('design_version') in (3, 4):
+        from .bold_render import render_bold
+        return render_bold(post, MEDIA, ASSETS, SIZES, font)
     if post.get('design_version') == 2:
         from .editorial_render import render_editorial
         return render_editorial(post, MEDIA, ASSETS, SIZES, COLORS, font, fit)
@@ -61,7 +60,7 @@ def render(post):
         fit(d,slide['title'],(64,y),w-128,title_h,84,accent,True)
         fit(d,slide['body'],(66,y+title_h+12),w-132,h-(y+title_h+12)-150,38,'#f4f5ef')
         d.line((64,h-120,w-64,h-120),fill='#46584c',width=2)
-        credit=post['source_name'][:50]
+        credit=public_source_label(post['source_name'])[:50]
         d.text((64,h-97),credit,font=font(22),fill='#b4c1b7')
         d.text((64,h-62),'@issue_news_money',font=font(22,True),fill='#dfe6db')
         d.text((w-150,h-66),f'{i+1:02} / {len(post["slides"]):02}',font=font(24),fill=accent)

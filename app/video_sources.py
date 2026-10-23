@@ -64,7 +64,8 @@ def command():
 
 
 def metadata(url, root):
-    run(command() + ['--skip-download', '--write-info-json', '-o', str(root / 'source.%(ext)s'), url])
+    args=command();at=args.index('--match-filters');del args[at:at+2]
+    run(args + ['--skip-download', '--write-info-json', '-o', str(root / 'source.%(ext)s'), url])
     file = root / 'source.info.json'
     if not file.exists() or file.stat().st_size > 8_000_000:
         raise p.ProviderError('단일 영상 정보를 확보하지 못했습니다.')
@@ -73,8 +74,10 @@ def metadata(url, root):
         duration = float(info.get('duration') or 0)
     except (ValueError, TypeError) as exc:
         raise p.ProviderError('영상 길이를 확인하지 못했습니다.') from exc
-    if info.get('_type') in ('playlist', 'multi_video') or info.get('is_live') or not math.isfinite(duration) or not 0 < duration <= 1200:
-        raise p.ProviderError('길이를 확인할 수 있는 20분 이하의 단일 일반 영상만 지원합니다.')
+    if info.get('is_live') or info.get('live_status') in ('is_live','is_upcoming'):
+        raise p.ProviderError('생방송·예정 방송은 자동 수집하지 않습니다. 종료된 단일 보도 영상이 필요합니다.',code='live_video')
+    if info.get('_type') in ('playlist','multi_video') or not math.isfinite(duration) or not 0 < duration <= 1200:
+        raise p.ProviderError('20분을 넘거나 길이가 확인되지 않는 영상입니다. 20분 이하 단일 보도를 선택해야 합니다.',code='unsupported_duration')
     return info
 
 
@@ -150,9 +153,9 @@ async def extract_video(url, data_dir):
             p.require('OPENAI_API_KEY')
             file = await asyncio.to_thread(audio_file, canonical, root)
             with file.open('rb') as audio:
-                result = await p.api('POST', 'https://api.openai.com/v1/audio/transcriptions',
-                    headers={'Authorization': 'Bearer ' + os.environ['OPENAI_API_KEY']},
-                    data={'model': os.getenv('OPENAI_TRANSCRIPTION_MODEL', 'gpt-transcribe')},
+                result = await p.api('POST', p.ai_url('audio/transcriptions'),
+                    headers=p.ai_headers(),
+                    data={'model': p.ai_model('TRANSCRIPTION')},
                     files={'file': ('speech.mp3', audio, 'audio/mpeg')})
             transcript = str(result.get('text') or '').strip()
             method = 'AI 음성 전사'

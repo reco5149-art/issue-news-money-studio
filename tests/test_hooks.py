@@ -17,7 +17,10 @@ def test_ai_tone_reaches_provider_and_preserves_request(monkeypatch, tone):
         assert tone + ':' in payload['instructions']
         assert '오후 6시' in payload['input']
         assert req.cta in payload['input']
-        assert '1장은 핵심 사실과 CTA를 함께 담는다' in payload['instructions']
+        assert '행동 요청은 캡션 마지막에 하나만' in payload['instructions']
+        for family in ['호기심 갭', '권위차용', '사회적 증거', '이득 숫자', '손실회피', '잃을 뻔한 이야기']:
+            assert family in payload['instructions']
+        assert '예시의 소재·숫자·직함은 사실이 아니라 형식' in payload['instructions']
         result = {'slides': [{'title': '토요일 도서관, 6시 전에 방문하세요',
                               'body': '토요일 운영은 오후 6시까지입니다. 방문 전에 저장해 두세요.'}],
                   'caption': '도서관 운영 안내'}
@@ -26,6 +29,7 @@ def test_ai_tone_reaches_provider_and_preserves_request(monkeypatch, tone):
     result = asyncio.run(providers.ai_copy(req))
     assert len(result['slides']) == 1
     assert '오후 6시' in result['slides'][0]['body']
+    assert result['hook_policy_version'] == 'targeted-six-hooks-v1'
 
 
 def test_hook_default_keeps_local_copy_factual():
